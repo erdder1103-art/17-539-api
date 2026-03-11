@@ -98,7 +98,7 @@ function parse539(html) {
     });
   }
 
-  return dedupe(results).slice(0, 100);
+  return dedupe(results).slice(0, 50);
 }
 
 function parseTTL(html) {
@@ -124,41 +124,51 @@ function parseTTL(html) {
     });
   }
 
-  return dedupe(results).slice(0, 100);
+  return dedupe(results).slice(0, 50);
 }
 
 async function update539() {
-  try {
-    const html = await fetchPage("https://sc888.net/index.php?s=/LotteryFtn/index");
-    const list = parse539(html);
+  for (let i = 0; i < 3; i++) {
+    try {
+      const html = await fetchPage("https://sc888.net/index.php?s=/LotteryFtn/index");
+      const list = parse539(html);
 
-    if (list.length > 0) {
-      cache539 = list;
-      console.log(`539 更新成功：${list.length} 筆`);
-      console.log("539 前3筆：", list.slice(0, 3));
-    } else {
-      console.log("539 解析到 0 筆，保留舊資料");
+      if (list.length > 0) {
+        cache539 = list;
+        console.log(`539 更新成功：${list.length} 筆`);
+        console.log("539 前3筆：", list.slice(0, 3));
+        return;
+      } else {
+        console.log(`539 第 ${i + 1} 次解析到 0 筆`);
+      }
+    } catch (e) {
+      console.log(`539 第 ${i + 1} 次更新失敗：`, e.message);
     }
-  } catch (e) {
-    console.log("539 更新失敗：", e.message);
   }
+
+  console.log("539 三次重試後仍失敗，保留舊資料");
 }
 
 async function updateTTL() {
-  try {
-    const html = await fetchPage("https://sc888.net/index.php?s=/LotteryFan/index");
-    const list = parseTTL(html);
+  for (let i = 0; i < 3; i++) {
+    try {
+      const html = await fetchPage("https://sc888.net/index.php?s=/LotteryFan/index");
+      const list = parseTTL(html);
 
-    if (list.length > 0) {
-      cacheTTL = list;
-      console.log(`TTL 更新成功：${list.length} 筆`);
-      console.log("TTL 前3筆：", list.slice(0, 3));
-    } else {
-      console.log("TTL 解析到 0 筆，保留舊資料");
+      if (list.length > 0) {
+        cacheTTL = list;
+        console.log(`TTL 更新成功：${list.length} 筆`);
+        console.log("TTL 前3筆：", list.slice(0, 3));
+        return;
+      } else {
+        console.log(`TTL 第 ${i + 1} 次解析到 0 筆`);
+      }
+    } catch (e) {
+      console.log(`TTL 第 ${i + 1} 次更新失敗：`, e.message);
     }
-  } catch (e) {
-    console.log("TTL 更新失敗：", e.message);
   }
+
+  console.log("TTL 三次重試後仍失敗，保留舊資料");
 }
 
 async function updateAll() {
@@ -203,5 +213,5 @@ app.get("/api/all", (req, res) => {
 app.listen(PORT, async () => {
   console.log(`API Server running http://localhost:${PORT}`);
   await updateAll();
-  setInterval(updateAll, 5 * 60 * 1000);
+  setInterval(updateAll, 60 * 1000);
 });
