@@ -1,0 +1,22 @@
+{
+  "539": {
+    "weekKey": "",
+    "summary": {
+      "passed": 0,
+      "fail": 0,
+      "retry": 0,
+      "x3": 0
+    },
+    "daily": {}
+  },
+  "ttl": {
+    "weekKey": "",
+    "summary": {
+      "passed": 0,
+      "fail": 0,
+      "retry": 0,
+      "x3": 0
+    },
+    "daily": {}
+  }
+}

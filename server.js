@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const { confirmTracking } = require('./trackingService');
 const { sendTelegramMessage } = require('./telegram');
+const { processLatestDraw, getResultHistory } = require('./resultService');
+const { getWeeklyStats, buildWeeklyStatsMessage } = require('./weekStats');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -158,6 +160,14 @@ async function updateTTL() {
 async function updateAll() {
   await update539();
   await updateTTL();
+
+  if (cache539[0]) {
+    await processLatestDraw('539', cache539[0]);
+  }
+  if (cacheTTL[0]) {
+    await processLatestDraw('ttl', cacheTTL[0]);
+  }
+
   lastUpdate = new Date().toISOString();
   console.log('最後更新：', lastUpdate);
 }
@@ -176,6 +186,39 @@ app.get('/api/all', (req, res) => {
     lotto539: { count: cache539.length, draws: cache539 },
     ttl: { count: cacheTTL.length, draws: cacheTTL }
   });
+});
+
+
+app.get('/api/weekly/:type', (req, res) => {
+  try {
+    const type = req.params.type === 'ttl' ? 'ttl' : '539';
+    res.json({
+      ok: true,
+      type,
+      stats: getWeeklyStats(type),
+      message: buildWeeklyStatsMessage(type)
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+app.get('/api/history/:type', (req, res) => {
+  try {
+    const type = req.params.type === 'ttl' ? 'ttl' : '539';
+    res.json({
+      ok: true,
+      type,
+      count: getResultHistory(type).length,
+      results: getResultHistory(type)
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, updated: lastUpdate });
 });
 
 app.post('/api/confirm-tracking', async (req, res) => {
