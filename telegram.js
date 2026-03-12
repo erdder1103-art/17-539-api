@@ -1,8 +1,14 @@
 const fetch = require('node-fetch');
 
 function getBotConfig() {
-  const token = process.env.BOT_TOKEN || '';
-  const chatId = process.env.TG_CHAT_ID || '';
+  const token =
+    process.env.BOT_TOKEN ||
+    "8724288146:AAFUItEZqR_jWTn6vr3xCxEM-3Bg_9y2gMY";
+
+  const chatId =
+    process.env.TG_CHAT_ID ||
+    "-5292559147";
+
   return { token, chatId };
 }
 
@@ -27,6 +33,7 @@ async function sendTelegramMessage(text, options = {}) {
       }),
       signal: controller.signal
     });
+
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
       throw new Error(data.description || `Telegram HTTP ${res.status}`);
