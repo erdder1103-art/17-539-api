@@ -7,8 +7,9 @@ const fs = require('fs');
 const path = require('path');
 const { confirmTracking } = require('./trackingService');
 const { sendTelegramMessage } = require('./telegram');
-const { processLatestDraw, getResultHistory } = require('./resultService');
-const { getWeeklyStats, buildWeeklyStatsMessage } = require('./weekStats');
+const { getActiveTracking } = require('./trackingStore');
+const { processTrackingResult, getResultHistory } = require('./resultService');
+const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,9 +19,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
@@ -57,20 +56,15 @@ async function fetchPage(url) {
       'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8'
     }
   });
-
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
   const html = await res.text();
-  if (!html || html.length < 1000) {
-    throw new Error('HTML 過短，疑似未正常抓到頁面');
-  }
+  if (!html || html.length < 1000) throw new Error('HTML 過短，疑似未正常抓到頁面');
   return html;
 }
 
 function htmlToText(html) {
   const $ = cheerio.load(html);
-  return $('body')
-    .text()
+  return $('body').text()
     .replace(/\r/g, '\n')
     .replace(/\u00a0/g, ' ')
     .replace(/[ \t]+/g, ' ')
@@ -79,18 +73,14 @@ function htmlToText(html) {
 }
 
 function saveDebugFile(name, content) {
-  const p = path.join(__dirname, name);
-  fs.writeFileSync(p, content, 'utf8');
+  fs.writeFileSync(path.join(__dirname, name), content, 'utf8');
 }
 
 function parse539(html) {
   const text = htmlToText(html);
-  const results = [];
-
   saveDebugFile('debug-539.txt', text);
-
+  const results = [];
   const regex = /第\s*(\d+)\s*期[\s\S]{0,120}?(\d{4}-\d{2}-\d{2})[\s\S]{0,80}?落球[\s\S]{0,40}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,40}?大小/g;
-
   let m;
   while ((m = regex.exec(text)) !== null) {
     const issue = m[1] || '';
@@ -99,18 +89,14 @@ function parse539(html) {
     if (!isValidFive(nums)) continue;
     results.push({ issue, date, numbers: nums.map(pad2) });
   }
-
   return dedupe(results).slice(0, 50);
 }
 
 function parseTTL(html) {
   const text = htmlToText(html);
-  const results = [];
-
   saveDebugFile('debug-ttl.txt', text);
-
+  const results = [];
   const regex = /第\s*(\d+)\s*期[\s\S]{0,120}?(\d{4}-\d{2}-\d{2})[\s\S]{0,50}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})(?=[\s\S]{0,80}?第\s*\d+\s*期|[\s\S]*$)/g;
-
   let m;
   while ((m = regex.exec(text)) !== null) {
     const issue = m[1] || '';
@@ -119,8 +105,22 @@ function parseTTL(html) {
     if (!isValidFive(nums)) continue;
     results.push({ issue, date, numbers: nums.map(pad2) });
   }
-
   return dedupe(results).slice(0, 50);
+}
+
+async function handleAutoCheck(type, title, list) {
+  if (!Array.isArray(list) || !list.length) return;
+  const latest = list[0];
+  const tracking = getActiveTracking(type);
+  if (!tracking) return;
+
+  try {
+    const issueKey = `${latest.issue}|${latest.date}|${latest.numbers.join('-')}`;
+    await processTrackingResult(type, title, latest.numbers, tracking, issueKey);
+    console.log(`${title} 自動核對完成：${issueKey}`);
+  } catch (err) {
+    console.error(`${title} 自動核對失敗：`, err.message);
+  }
 }
 
 async function update539() {
@@ -129,8 +129,11 @@ async function update539() {
       const html = await fetchPage('https://sc888.net/index.php?s=/LotteryFtn/index');
       const list = parse539(html);
       if (list.length > 0) {
+        const oldIssue = cache539[0] ? `${cache539[0].issue}|${cache539[0].date}|${cache539[0].numbers.join('-')}` : null;
+        const newIssue = `${list[0].issue}|${list[0].date}|${list[0].numbers.join('-')}`;
         cache539 = list;
         console.log(`539 更新成功：${list.length} 筆`);
+        if (oldIssue !== newIssue) await handleAutoCheck('539', '539', list);
         return;
       }
     } catch (e) {
@@ -146,8 +149,11 @@ async function updateTTL() {
       const html = await fetchPage('https://sc888.net/index.php?s=/LotteryFan/index');
       const list = parseTTL(html);
       if (list.length > 0) {
+        const oldIssue = cacheTTL[0] ? `${cacheTTL[0].issue}|${cacheTTL[0].date}|${cacheTTL[0].numbers.join('-')}` : null;
+        const newIssue = `${list[0].issue}|${list[0].date}|${list[0].numbers.join('-')}`;
         cacheTTL = list;
         console.log(`TTL 更新成功：${list.length} 筆`);
+        if (oldIssue !== newIssue) await handleAutoCheck('ttl', '天天樂', list);
         return;
       }
     } catch (e) {
@@ -158,68 +164,19 @@ async function updateTTL() {
 }
 
 async function updateAll() {
-  await update539();
-  await updateTTL();
-
-  if (cache539[0]) {
-    await processLatestDraw('539', cache539[0]);
-  }
-  if (cacheTTL[0]) {
-    await processLatestDraw('ttl', cacheTTL[0]);
-  }
-
+  await Promise.all([update539(), updateTTL()]);
   lastUpdate = new Date().toISOString();
   console.log('最後更新：', lastUpdate);
 }
 
-app.get('/api/539', (req, res) => {
-  res.json({ game: '539', updated: lastUpdate, count: cache539.length, draws: cache539 });
-});
-
-app.get('/api/ttl', (req, res) => {
-  res.json({ game: 'ttl', updated: lastUpdate, count: cacheTTL.length, draws: cacheTTL });
-});
-
-app.get('/api/all', (req, res) => {
-  res.json({
-    updated: lastUpdate,
-    lotto539: { count: cache539.length, draws: cache539 },
-    ttl: { count: cacheTTL.length, draws: cacheTTL }
-  });
-});
-
-
-app.get('/api/weekly/:type', (req, res) => {
-  try {
-    const type = req.params.type === 'ttl' ? 'ttl' : '539';
-    res.json({
-      ok: true,
-      type,
-      stats: getWeeklyStats(type),
-      message: buildWeeklyStatsMessage(type)
-    });
-  } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
-  }
-});
-
-app.get('/api/history/:type', (req, res) => {
-  try {
-    const type = req.params.type === 'ttl' ? 'ttl' : '539';
-    res.json({
-      ok: true,
-      type,
-      count: getResultHistory(type).length,
-      results: getResultHistory(type)
-    });
-  } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
-  }
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, updated: lastUpdate });
-});
+app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, count: cache539.length, draws: cache539 }));
+app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, count: cacheTTL.length, draws: cacheTTL }));
+app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
+app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate }));
+app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
+app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
+app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
+app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 
 app.post('/api/confirm-tracking', async (req, res) => {
   try {
@@ -234,7 +191,7 @@ app.post('/api/confirm-tracking', async (req, res) => {
 app.post('/api/test-telegram', async (req, res) => {
   try {
     const text = (req.body && req.body.text) || 'TG Bot 測試成功';
-    const data = await sendTelegramMessage(text);
+    const data = await sendTelegramMessage(text, { timeoutMs: 8000 });
     res.json({ ok: true, data });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });

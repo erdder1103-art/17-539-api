@@ -6,6 +6,8 @@ const {
   normalizeLotteryType
 } = require('./trackingStore');
 
+const inflightByType = new Map();
+
 function pad2(n) {
   return String(parseInt(n, 10)).padStart(2, '0');
 }
@@ -77,21 +79,31 @@ function buildTrackingRecord(input) {
 
 function buildCreatedMessage(record) {
   return [
-    `【${record.lotteryTitle}確定通報】`,
+    `【拾柒追蹤系統｜${record.lotteryTitle} 確定通報】`,
     '',
+    `通報狀態：已建立追蹤`,
+    `通報時間：${record.confirmedAt}`,
+    '',
+    `本次追蹤分組：`,
     `${record.labels.group1}：${record.groups.group1.join('、')}`,
     `${record.labels.group2}：${record.groups.group2.join('、')}`,
     `${record.labels.group3}：${record.groups.group3.join('、')}`,
     `${record.labels.group4}：${record.groups.group4.join('、')}`,
-    `${record.labels.full}：${record.groups.full.join('、')}`
+    `${record.labels.full}：${record.groups.full.join('、')}`,
+    '',
+    `說明：若同彩種於開獎前重新通報，系統將自動取消前一次追蹤，並以最新通報為準。`
   ].join('\n');
 }
 
 function buildUpdatedMessage(record) {
   return [
-    `【${record.lotteryTitle}通報更新】`,
-    '已取消前一組追蹤號碼',
-    '改為追蹤最新生成號碼',
+    `【拾柒追蹤系統｜${record.lotteryTitle} 通報更新】`,
+    '',
+    `追蹤狀態：已更新`,
+    `更新時間：${record.confirmedAt}`,
+    '',
+    `系統已取消上一筆 ${record.lotteryTitle} 追蹤資料，`,
+    `目前改為追蹤以下最新分組：`,
     '',
     `${record.labels.group1}：${record.groups.group1.join('、')}`,
     `${record.labels.group2}：${record.groups.group2.join('、')}`,
@@ -101,26 +113,46 @@ function buildUpdatedMessage(record) {
   ].join('\n');
 }
 
+function fireAndForgetTelegram(text, type) {
+  sendTelegramMessage(text, { timeoutMs: 8000 })
+    .catch((err) => console.error(`[${type}] telegram failed:`, err.message))
+    .finally(() => inflightByType.delete(type));
+}
+
 async function confirmTracking(payload) {
   const parsed = validatePayload(payload);
-  const current = getActiveTracking(parsed.lotteryType);
-  let replacedOldTracking = false;
+  const type = parsed.lotteryType;
 
+  if (inflightByType.get(type)) {
+    return {
+      ok: true,
+      busy: true,
+      replacedOldTracking: false,
+      message: `${parsed.lotteryTitle} 通報處理中，請勿重複點擊`
+    };
+  }
+
+  const current = getActiveTracking(type);
+  let replacedOldTracking = false;
   if (current) {
-    cancelActiveTracking(parsed.lotteryType);
+    cancelActiveTracking(type);
     replacedOldTracking = true;
   }
 
   const record = buildTrackingRecord(parsed);
-  setActiveTracking(parsed.lotteryType, record);
+  setActiveTracking(type, record);
 
-  const text = replacedOldTracking ? buildUpdatedMessage(record) : buildCreatedMessage(record);
-  await sendTelegramMessage(text);
+  inflightByType.set(type, true);
+  fireAndForgetTelegram(replacedOldTracking ? buildUpdatedMessage(record) : buildCreatedMessage(record), type);
 
   return {
     ok: true,
+    busy: false,
     replacedOldTracking,
-    tracking: record
+    tracking: record,
+    message: replacedOldTracking
+      ? `${parsed.lotteryTitle} 已取消前一組並更新追蹤`
+      : `${parsed.lotteryTitle} 已建立追蹤並送出通報`
   };
 }
 

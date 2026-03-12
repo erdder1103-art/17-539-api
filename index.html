@@ -566,6 +566,10 @@
     settings: {
       autoSave: true,
       autoDownloadXlsx: false
+    },
+    trackingSubmitLocks: {
+      ttl: false,
+      l539: false
     }
   };
 
@@ -2148,8 +2152,20 @@
       return;
     }
 
+    if(state.trackingSubmitLocks[id]){
+      showMiniNotice(`${s.cfg.title}：通報處理中，請勿重複點擊`, "warn");
+      return;
+    }
+
     const btn = $(`${id}_btnConfirmTracking`);
+    if(btn && btn.disabled){
+      showMiniNotice(`${s.cfg.title}：通報處理中，請稍候`, "warn");
+      return;
+    }
+
     const oldText = btn ? btn.textContent : "";
+    state.trackingSubmitLocks[id] = true;
+
     if(btn){
       btn.disabled = true;
       btn.textContent = "通報中...";
@@ -2184,11 +2200,15 @@
       }
     };
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
     try{
       const res = await fetch("https://17-539-api-production-9873.up.railway.app/api/confirm-tracking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       });
 
       let result = null;
@@ -2203,14 +2223,17 @@
         throw new Error(msg);
       }
 
-      const replaced = !!result.replacedOldTracking;
-      showMiniNotice(
-        `${s.cfg.title}：${replaced ? "已取消前一組並更新通報" : "確定通報成功，已送出 TG"}`,
-        "ok"
-      );
+      if(result?.busy){
+        showMiniNotice(`${s.cfg.title}：${result.message || "通報處理中，請勿重複點擊"}`, "warn");
+      }else{
+        showMiniNotice(`${s.cfg.title}：${result.message || "通報已送出"}`, "ok");
+      }
     }catch(err){
-      showMiniNotice(`${s.cfg.title}：通報失敗：${err.message}`, "warn");
+      const msg = err?.name === "AbortError" ? "通報逾時，請稍後再試" : err.message;
+      showMiniNotice(`${s.cfg.title}：通報失敗：${msg}`, "warn");
     }finally{
+      clearTimeout(timer);
+      state.trackingSubmitLocks[id] = false;
       if(btn){
         btn.disabled = false;
         btn.textContent = oldText || "確定通報";
