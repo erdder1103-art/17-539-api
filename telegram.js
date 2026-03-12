@@ -1,8 +1,15 @@
+
 const fetch = require('node-fetch');
 
 function getBotConfig() {
-  const token = process.env.BOT_TOKEN || '';
-  const chatId = process.env.TG_CHAT_ID || '';
+  const token =
+    process.env.BOT_TOKEN ||
+    "8724288146:AAFUItEZqR_jWTn6vr3xCxEM-3Bg_9y2gMY";
+
+  const chatId =
+    process.env.TG_CHAT_ID ||
+    "-5292559147";
+
   return { token, chatId };
 }
 
@@ -12,6 +19,9 @@ async function sendTelegramMessage(text) {
   if (!chatId) throw new Error('缺少 TG_CHAT_ID');
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  console.log("Sending TG message:", text);
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

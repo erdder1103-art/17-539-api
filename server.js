@@ -1,4 +1,4 @@
-require('dotenv').config();
+try { require('dotenv').config(); } catch(e) { console.log('dotenv optional'); }
 
 const express = require('express');
 const fetch = require('node-fetch');
@@ -201,5 +201,5 @@ app.post('/api/test-telegram', async (req, res) => {
 app.listen(PORT, async () => {
   console.log(`API Server running http://localhost:${PORT}`);
   await updateAll();
-  setInterval(updateAll, 60 * 1000);
+  setInterval(updateAll, 120 * 1000);
 });
