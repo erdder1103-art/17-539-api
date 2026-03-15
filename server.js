@@ -23,6 +23,16 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  next();
+});
+
+app.get('/', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.use(express.static('public'));
 
 let cache539 = [];
