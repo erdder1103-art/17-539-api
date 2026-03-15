@@ -834,6 +834,89 @@
     )];
   }
 
+  function parseManualNumbersText(text, maxNum){
+    const tokens = String(text || "").match(/\d{1,2}/g) || [];
+    return cleanupNumbers(tokens, maxNum);
+  }
+
+  function applyManualGroups(id){
+    const s = state.lotteries[id];
+    const els = getEls(id);
+    const order = [
+      $(`${id}_prize1Desc`).value.trim() || "第一組",
+      $(`${id}_prize2Desc`).value.trim() || "第二組",
+      $(`${id}_prize3Desc`).value.trim() || "第三組",
+      $(`${id}_prize4Desc`).value.trim() || "第四組",
+      $(`${id}_prize5Desc`).value.trim() || "全車號碼"
+    ];
+
+    const manual = {
+      [order[0]]: parseManualNumbersText(els.manualGroup1?.value || "", s.cfg.maxNum),
+      [order[1]]: parseManualNumbersText(els.manualGroup2?.value || "", s.cfg.maxNum),
+      [order[2]]: parseManualNumbersText(els.manualGroup3?.value || "", s.cfg.maxNum),
+      [order[3]]: parseManualNumbersText(els.manualGroup4?.value || "", s.cfg.maxNum),
+      [order[4]]: parseManualNumbersText(els.manualFull?.value || "", s.cfg.maxNum)
+    };
+
+    if(manual[order[0]].length !== 5 || manual[order[1]].length !== 5 || manual[order[2]].length !== 5 || manual[order[3]].length !== 5){
+      showMiniNotice(`${s.cfg.title}：手動輸入的第一組到第四組都必須是 5 顆`, "warn");
+      return false;
+    }
+
+    s.generatedGroups = {
+      score: 0,
+      twoHitRisk: 0,
+      threeHitRisk: 0,
+      groups: manual
+    };
+    renderGroupPreview(id, s.generatedGroups);
+    applyGeneratedGroupsToLog(id, manual);
+    persistAll();
+    showMiniNotice(`${s.cfg.title}：已套用手動輸入號碼`, "ok");
+    return true;
+  }
+
+  async function loadWeeklySummary(id){
+    const type = id === "ttl" ? "ttl" : "539";
+    const els = getEls(id);
+    try{
+      const weeksRes = await fetch(`/api/weekly-history/${type}`);
+      const weeksData = await weeksRes.json();
+      if(weeksData?.ok && Array.isArray(weeksData.weeks) && els.weeklySelect){
+        const selected = els.weeklySelect.value;
+        els.weeklySelect.innerHTML = weeksData.weeks.map(w => `<option value="${w}">${w}</option>`).join("");
+        if(selected && weeksData.weeks.includes(selected)) els.weeklySelect.value = selected;
+      }
+
+      const week = els.weeklySelect?.value || "";
+      const res = await fetch(week ? `/api/weekly/${type}/${week}` : `/api/weekly/${type}`);
+      const data = await res.json();
+      if(!res.ok || !data?.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      if(els.weeklyViewer) els.weeklyViewer.value = data.text || "";
+    }catch(err){
+      showMiniNotice(`${state.lotteries[id].cfg.title}：讀取週成果失敗：${err.message}`, "warn");
+    }
+  }
+
+  async function notifyWeeklySummary(id){
+    const type = id === "ttl" ? "ttl" : "539";
+    const els = getEls(id);
+    try{
+      const res = await fetch(`/api/notify-weekly/${type}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ week: els.weeklySelect?.value || "" })
+      });
+      const data = await res.json();
+      if(!res.ok || !data?.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      showMiniNotice(`${state.lotteries[id].cfg.title}：已通報週成果`, "ok");
+      if(els.weeklyViewer) els.weeklyViewer.value = data.text || els.weeklyViewer.value;
+    }catch(err){
+      showMiniNotice(`${state.lotteries[id].cfg.title}：通報週成果失敗：${err.message}`, "warn");
+    }
+  }
+
+
   function comboKey(nums){
     return [...nums]
       .map(n => String(parseInt(n,10)).padStart(2,"0"))
@@ -1007,6 +1090,63 @@
               <div class="chips" id="${id}_riskTriples" style="margin-top:8px;"></div>
             </div>
 
+            <div class="row" style="margin-top:12px;">
+              <div>
+                <label class="small">通報名稱（可手動填寫）</label>
+                <input id="${id}_trackingName" placeholder="例如：小明、張三、A組">
+              </div>
+              <div>
+                <label class="small">手動填寫模式說明</label>
+                <input value="可自行修改第一組~全車號碼後直接通報" readonly>
+              </div>
+            </div>
+
+            <div class="analysisPanel" style="margin-top:12px;">
+              <div class="analysisTitle">手動輸入追蹤號碼</div>
+              <div class="row">
+                <div>
+                  <label class="small">第一組</label>
+                  <textarea id="${id}_manualGroup1" placeholder="例如：01 02 03 04 05"></textarea>
+                </div>
+                <div>
+                  <label class="small">第二組</label>
+                  <textarea id="${id}_manualGroup2" placeholder="例如：06 07 08 09 10"></textarea>
+                </div>
+              </div>
+              <div class="row" style="margin-top:10px;">
+                <div>
+                  <label class="small">第三組</label>
+                  <textarea id="${id}_manualGroup3" placeholder="例如：11 12 13 14 15"></textarea>
+                </div>
+                <div>
+                  <label class="small">第四組</label>
+                  <textarea id="${id}_manualGroup4" placeholder="例如：16 17 18 19 20"></textarea>
+                </div>
+              </div>
+              <div style="margin-top:10px;">
+                <label class="small">全車號碼</label>
+                <textarea id="${id}_manualFull" placeholder="例如：21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39"></textarea>
+              </div>
+              <div class="btns">
+                <button class="secondary" id="${id}_btnApplyManualGroups">套用手動輸入</button>
+              </div>
+            </div>
+
+            <div class="analysisPanel" style="margin-top:12px;">
+              <div class="analysisTitle">本周 / 歷史週成果查看與通報</div>
+              <div class="row">
+                <div>
+                  <label class="small">選擇週別</label>
+                  <select id="${id}_weeklySelect"></select>
+                </div>
+                <div style="display:flex;align-items:end;gap:10px;">
+                  <button class="secondary" id="${id}_btnLoadWeekly">讀取週成果</button>
+                  <button class="green" id="${id}_btnNotifyWeekly">通報本週/歷史週成果</button>
+                </div>
+              </div>
+              <textarea id="${id}_weeklyViewer" style="margin-top:10px;" placeholder="這裡會顯示目前這周或所選歷史週成果" readonly></textarea>
+            </div>
+
             <div class="analysisPanel" style="margin-top:12px;">
               <div class="analysisTitle">自動分組預覽</div>
               <div id="${id}_groupPreview" class="groupPreview">
@@ -1115,6 +1255,14 @@
       coldNumbers: $(`${id}_coldNumbers`),
       riskPairs: $(`${id}_riskPairs`),
       riskTriples: $(`${id}_riskTriples`),
+      trackingName: $(`${id}_trackingName`),
+      manualGroup1: $(`${id}_manualGroup1`),
+      manualGroup2: $(`${id}_manualGroup2`),
+      manualGroup3: $(`${id}_manualGroup3`),
+      manualGroup4: $(`${id}_manualGroup4`),
+      manualFull: $(`${id}_manualFull`),
+      weeklySelect: $(`${id}_weeklySelect`),
+      weeklyViewer: $(`${id}_weeklyViewer`),
       groupPreview: $(`${id}_groupPreview`),
       resultBox: $(`${id}_resultBox`),
       currentWinner: $(`${id}_currentWinner`),
@@ -1383,6 +1531,19 @@
       topPairs,
       topTriples
     };
+  }
+
+  async function fetchLearningWeights(id){
+    const type = id === "ttl" ? "ttl" : "539";
+    try{
+      const res = await fetch(`/api/learning/${type}`);
+      const data = await res.json();
+      if(res.ok && data?.ok){
+        state.lotteries[id].learningWeights = data.weights || null;
+        return data.weights || null;
+      }
+    }catch(err){}
+    return null;
   }
 
   function renderHistoryAnalysis(id, analysis){
@@ -2050,6 +2211,14 @@
         cleanupMode: els.cleanupMode.value,
         drawMode: els.drawMode.value,
         autoDownloadXlsx: els.autoDownloadXlsx.checked,
+        trackingName: els.trackingName ? els.trackingName.value : "",
+        manualGroups: {
+          group1: els.manualGroup1 ? els.manualGroup1.value : "",
+          group2: els.manualGroup2 ? els.manualGroup2.value : "",
+          group3: els.manualGroup3 ? els.manualGroup3.value : "",
+          group4: els.manualGroup4 ? els.manualGroup4.value : "",
+          full: els.manualFull ? els.manualFull.value : ""
+        },
         prizes: [1,2,3,4,5].map(i => ({
           label: $(`${id}_prize${i}Label`).value,
           desc: $(`${id}_prize${i}Desc`).value,
@@ -2099,6 +2268,14 @@
         els.cleanupMode.value = saved.cleanupMode || "trim";
         els.drawMode.value = saved.drawMode || "remove";
         els.autoDownloadXlsx.checked = !!saved.autoDownloadXlsx;
+        if(els.trackingName) els.trackingName.value = saved.trackingName || "";
+        if(saved.manualGroups){
+          if(els.manualGroup1) els.manualGroup1.value = saved.manualGroups.group1 || "";
+          if(els.manualGroup2) els.manualGroup2.value = saved.manualGroups.group2 || "";
+          if(els.manualGroup3) els.manualGroup3.value = saved.manualGroups.group3 || "";
+          if(els.manualGroup4) els.manualGroup4.value = saved.manualGroups.group4 || "";
+          if(els.manualFull) els.manualFull.value = saved.manualGroups.full || "";
+        }
 
         if(Array.isArray(saved.prizes)){
           saved.prizes.forEach((p, idx)=>{
@@ -2147,8 +2324,16 @@
 
   async function confirmTracking(id){
     const s = state.lotteries[id];
+    const els = getEls(id);
+    const hasManual = !!((els.manualGroup1?.value || els.manualGroup2?.value || els.manualGroup3?.value || els.manualGroup4?.value || els.manualFull?.value || "").trim());
+
+    if(hasManual){
+      const ok = applyManualGroups(id);
+      if(!ok) return;
+    }
+
     if(!s.generatedGroups || !s.generatedGroups.groups){
-      showMiniNotice(`${s.cfg.title}：請先執行「防 2/3 碰撞自動生成」`, "warn");
+      showMiniNotice(`${s.cfg.title}：請先執行「防 2/3 碰撞自動生成」或套用手動輸入`, "warn");
       return;
     }
 
@@ -2183,6 +2368,7 @@
     const payload = {
       lotteryType: id === "ttl" ? "ttl" : "539",
       lotteryTitle: s.cfg.title,
+      trackingName: els.trackingName ? els.trackingName.value.trim() : "",
       confirmedAt: nowFull(),
       groups: {
         group1: cleanupNumbers(groups[order[0]] || [], s.cfg.maxNum),
@@ -2204,7 +2390,7 @@
     const timer = setTimeout(() => controller.abort(), 12000);
 
     try{
-      const res = await fetch("https://17-539-api-production-9873.up.railway.app/api/confirm-tracking", {
+      const res = await fetch("/api/confirm-tracking", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -2315,6 +2501,12 @@
     getEls(id).historyInput.addEventListener("input", persistAll);
     getEls(id).cleanupMode.addEventListener("change", persistAll);
     getEls(id).drawMode.addEventListener("change", persistAll);
+    if(getEls(id).trackingName) getEls(id).trackingName.addEventListener("input", persistAll);
+    if(getEls(id).manualGroup1) getEls(id).manualGroup1.addEventListener("input", persistAll);
+    if(getEls(id).manualGroup2) getEls(id).manualGroup2.addEventListener("input", persistAll);
+    if(getEls(id).manualGroup3) getEls(id).manualGroup3.addEventListener("input", persistAll);
+    if(getEls(id).manualGroup4) getEls(id).manualGroup4.addEventListener("input", persistAll);
+    if(getEls(id).manualFull) getEls(id).manualFull.addEventListener("input", persistAll);
 
     syncPrizeButtons(id);
   }
@@ -2344,6 +2536,8 @@
     if(!ok && restored){
       renderRestoredState(id);
     }
+    await fetchLearningWeights(id);
+    await loadWeeklySummary(id);
     startAutoTimer(id);
   }
 

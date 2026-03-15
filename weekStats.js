@@ -14,35 +14,35 @@ function getWeekKey(date = new Date()) {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
-function createEmpty(type) {
-  return {
-    week: getWeekKey(),
-    summary: {
-      passed: 0,
-      fail: 0,
-      retry: 0,
-      x33: 0,
-      jackpot: 0
-    },
-    daily: {},
-    type
-  };
+function baseSummary() {
+  return { passed: 0, fail: 0, retry: 0, x33: 0, jackpot: 0 };
+}
+
+function createWeekRecord(type, week) {
+  return { week: week || getWeekKey(), summary: baseSummary(), daily: {}, type };
+}
+
+function createTypeStore(type) {
+  const current = createWeekRecord(type, getWeekKey());
+  return { current, history: {} };
 }
 
 function readStore() {
   try {
     if (!fs.existsSync(FILE)) {
-      return {
-        '539': createEmpty('539'),
-        'ttl': createEmpty('ttl')
-      };
+      return { '539': createTypeStore('539'), 'ttl': createTypeStore('ttl') };
     }
-    return JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    for (const key of ['539', 'ttl']) {
+      if (!data[key]) data[key] = createTypeStore(key);
+      if (!data[key].current) data[key].current = createWeekRecord(key, getWeekKey());
+      if (!data[key].history) data[key].history = {};
+      if (!data[key].current.summary) data[key].current.summary = baseSummary();
+      if (!data[key].current.daily) data[key].current.daily = {};
+    }
+    return data;
   } catch (err) {
-    return {
-      '539': createEmpty('539'),
-      'ttl': createEmpty('ttl')
-    };
+    return { '539': createTypeStore('539'), 'ttl': createTypeStore('ttl') };
   }
 }
 
@@ -50,12 +50,13 @@ function writeStore(data) {
   fs.writeFileSync(FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function ensureWeek(record, type) {
+function ensureWeek(typeStore, type) {
   const nowKey = getWeekKey();
-  if (!record || record.week !== nowKey) {
-    return createEmpty(type);
+  if (typeStore.current.week !== nowKey) {
+    typeStore.history[typeStore.current.week] = typeStore.current;
+    typeStore.current = createWeekRecord(type, nowKey);
   }
-  return record;
+  return typeStore;
 }
 
 function weekdayText() {
@@ -67,16 +68,16 @@ function updateWeeklyStats(type, resultLabel) {
   const key = type === 'ttl' ? 'ttl' : '539';
   const store = readStore();
   store[key] = ensureWeek(store[key], key);
-  store[key].daily[weekdayText()] = resultLabel;
+  store[key].current.daily[weekdayText()] = resultLabel;
 
-  if (resultLabel === '恭喜過關') store[key].summary.passed += 1;
-  else if (resultLabel === '沒過') store[key].summary.fail += 1;
-  else if (resultLabel === '再接再厲') store[key].summary.retry += 1;
-  else if (resultLabel === '靠3.3倍') store[key].summary.x33 += 1;
-  else if (resultLabel === '發財了各位') store[key].summary.jackpot += 1;
+  if (resultLabel === '恭喜過關') store[key].current.summary.passed += 1;
+  else if (resultLabel === '沒過') store[key].current.summary.fail += 1;
+  else if (resultLabel === '再接再厲') store[key].current.summary.retry += 1;
+  else if (resultLabel === '靠3.3倍') store[key].current.summary.x33 += 1;
+  else if (resultLabel === '發財了各位') store[key].current.summary.jackpot += 1;
 
   writeStore(store);
-  return store[key];
+  return store[key].current;
 }
 
 function getWeeklyStats(type) {
@@ -84,7 +85,25 @@ function getWeeklyStats(type) {
   const store = readStore();
   store[key] = ensureWeek(store[key], key);
   writeStore(store);
-  return store[key];
+  return store[key].current;
+}
+
+function getWeeklyByWeek(type, week) {
+  const key = type === 'ttl' ? 'ttl' : '539';
+  const store = readStore();
+  store[key] = ensureWeek(store[key], key);
+  writeStore(store);
+  if (!week || store[key].current.week === week) return store[key].current;
+  return store[key].history[week] || null;
+}
+
+function listWeeklyHistory(type) {
+  const key = type === 'ttl' ? 'ttl' : '539';
+  const store = readStore();
+  store[key] = ensureWeek(store[key], key);
+  writeStore(store);
+  const weeks = [store[key].current.week, ...Object.keys(store[key].history).sort().reverse()];
+  return Array.from(new Set(weeks));
 }
 
 function buildWeeklySummaryText(type, weekly) {
@@ -95,25 +114,16 @@ function buildWeeklySummaryText(type, weekly) {
 
   const lines = [
     `【${title} 本周成果】`,
+    `週別：${data.week}`,
     '',
     `恭喜過關：${data.summary.passed}次`,
-    `沒過：${data.summary.fail}次`,
     `再接再厲：${data.summary.retry}次`,
     `靠3.3倍：${data.summary.x33}次`,
     `發財了各位：${data.summary.jackpot}次`,
     ''
   ];
-
-  days.forEach(day => {
-    lines.push(`${day}：${data.daily[day] || ''}`);
-  });
-
+  days.forEach(day => lines.push(`${day}：${data.daily[day] || ''}`));
   return lines.join('\n');
 }
 
-module.exports = {
-  getWeekKey,
-  updateWeeklyStats,
-  getWeeklyStats,
-  buildWeeklySummaryText
-};
+module.exports = { getWeekKey, updateWeeklyStats, getWeeklyStats, getWeeklyByWeek, listWeeklyHistory, buildWeeklySummaryText };

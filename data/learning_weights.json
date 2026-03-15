@@ -1,0 +1,50 @@
+{
+  "539": {
+    "type": "539",
+    "updatedAt": "",
+    "sampleCount": 0,
+    "finalCounts": {
+      "pass": 0,
+      "retry": 0,
+      "x33": 0,
+      "jackpot": 0
+    },
+    "numberPenalty": {},
+    "pairPenalty": {},
+    "groupPenalty": {
+      "bucket": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0
+      },
+      "tail": {},
+      "adjacency": 0
+    },
+    "recentBadShots": []
+  },
+  "ttl": {
+    "type": "ttl",
+    "updatedAt": "",
+    "sampleCount": 0,
+    "finalCounts": {
+      "pass": 0,
+      "retry": 0,
+      "x33": 0,
+      "jackpot": 0
+    },
+    "numberPenalty": {},
+    "pairPenalty": {},
+    "groupPenalty": {
+      "bucket": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0
+      },
+      "tail": {},
+      "adjacency": 0
+    },
+    "recentBadShots": []
+  }
+}

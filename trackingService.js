@@ -12,8 +12,23 @@ function pad2(n) {
   return String(parseInt(n, 10)).padStart(2, '0');
 }
 
+function nowTaipei() {
+  const parts = new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+  const pick = (type) => parts.find(x => x.type === type)?.value || '';
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
+}
+
 function nowIsoId() {
-  return new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  return nowTaipei().replace(/[-: ]/g, '').slice(0, 14);
 }
 
 function validateGroup(name, arr) {
@@ -52,7 +67,8 @@ function validatePayload(payload) {
   return {
     lotteryType,
     lotteryTitle: title,
-    confirmedAt: payload.confirmedAt || new Date().toISOString(),
+    trackingName: String(payload.trackingName || '').trim(),
+    confirmedAt: payload.confirmedAt || nowTaipei(),
     labels: payload.labels || {
       group1: '第一組',
       group2: '第二組',
@@ -69,18 +85,24 @@ function buildTrackingRecord(input) {
     id: `${input.lotteryType}_${nowIsoId()}`,
     lotteryType: input.lotteryType,
     lotteryTitle: input.lotteryTitle,
+    trackingName: input.trackingName || '',
     confirmedAt: input.confirmedAt,
-    createdAt: new Date().toISOString(),
+    createdAt: nowTaipei(),
     status: 'tracking',
     labels: input.labels,
     groups: input.groups
   };
 }
 
+function nameBlock(record) {
+  return record.trackingName ? [`通報名稱：${record.trackingName}`, ''] : [];
+}
+
 function buildCreatedMessage(record) {
   return [
     `【拾柒追蹤系統｜${record.lotteryTitle} 確定通報】`,
     '',
+    ...nameBlock(record),
     `通報狀態：已建立追蹤`,
     `通報時間：${record.confirmedAt}`,
     '',
@@ -99,6 +121,7 @@ function buildUpdatedMessage(record) {
   return [
     `【拾柒追蹤系統｜${record.lotteryTitle} 通報更新】`,
     '',
+    ...nameBlock(record),
     `追蹤狀態：已更新`,
     `更新時間：${record.confirmedAt}`,
     '',
@@ -134,7 +157,7 @@ async function confirmTracking(payload) {
 
   const current = getActiveTracking(type);
   let replacedOldTracking = false;
-  if (current) {
+  if (current && current.status === 'tracking') {
     cancelActiveTracking(type);
     replacedOldTracking = true;
   }
@@ -156,4 +179,4 @@ async function confirmTracking(payload) {
   };
 }
 
-module.exports = { confirmTracking };
+module.exports = { confirmTracking, nowTaipei };

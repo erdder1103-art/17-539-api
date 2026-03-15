@@ -9,7 +9,8 @@ const { confirmTracking } = require('./trackingService');
 const { sendTelegramMessage } = require('./telegram');
 const { getActiveTracking } = require('./trackingStore');
 const { processTrackingResult, getResultHistory } = require('./resultService');
-const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
+const { getWeights, summarizeWeights } = require('./learningEngine');
+const { buildWeeklySummaryText, getWeeklyStats, getWeeklyByWeek, listWeeklyHistory } = require('./weekStats');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -175,8 +176,27 @@ app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, lotto539: { co
 app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate }));
 app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
 app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
+
+app.get('/api/weekly-history/:type', (req, res) => {
+  const type = req.params.type === 'ttl' ? 'ttl' : '539';
+  res.json({ ok: true, weeks: listWeeklyHistory(type) });
+});
+
+app.get('/api/weekly/:type/:week', (req, res) => {
+  const type = req.params.type === 'ttl' ? 'ttl' : '539';
+  const weekly = getWeeklyByWeek(type, req.params.week);
+  if (!weekly) return res.status(404).json({ ok: false, message: '找不到指定週別資料' });
+  res.json({ ok: true, weekly, text: buildWeeklySummaryText(type, weekly) });
+});
+
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
+
+app.get('/api/learning/:type', (req, res) => {
+  const type = req.params.type === 'ttl' ? 'ttl' : '539';
+  res.json({ ok: true, weights: getWeights(type), summary: summarizeWeights(type) });
+});
+
 
 app.post('/api/confirm-tracking', async (req, res) => {
   try {
@@ -193,6 +213,31 @@ app.post('/api/test-telegram', async (req, res) => {
     const text = (req.body && req.body.text) || 'TG Bot 測試成功';
     const data = await sendTelegramMessage(text, { timeoutMs: 8000 });
     res.json({ ok: true, data });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+app.post('/api/notify-weekly/:type', async (req, res) => {
+  try {
+    const type = req.params.type === 'ttl' ? 'ttl' : '539';
+    const weekly = req.body && req.body.week ? getWeeklyByWeek(type, req.body.week) : getWeeklyStats(type);
+    if (!weekly) throw new Error('找不到指定週別資料');
+    const text = buildWeeklySummaryText(type, weekly);
+    await sendTelegramMessage(text, { timeoutMs: 8000 });
+    res.json({ ok: true, text });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+app.post('/api/notify-weekly/all', async (req, res) => {
+  try {
+    const text539 = buildWeeklySummaryText('539');
+    const textTtl = buildWeeklySummaryText('ttl');
+    await sendTelegramMessage(text539, { timeoutMs: 8000 });
+    await sendTelegramMessage(textTtl, { timeoutMs: 8000 });
+    res.json({ ok: true, sent: ['539', 'ttl'] });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
   }

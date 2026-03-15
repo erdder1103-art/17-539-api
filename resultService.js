@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const { sendTelegramMessage } = require('./telegram');
-const { updateWeeklyStats, buildWeeklySummaryText, getWeekKey } = require('./weekStats');
+const { updateWeeklyStats, getWeekKey } = require('./weekStats');
+const { updateFromResult } = require('./learningEngine');
+const { setActiveTracking, getActiveTracking } = require('./trackingStore');
 
 const RESULT_STATE_FILE = path.join(__dirname, 'data', 'result_state.json');
 const RESULT_HISTORY_FILE = path.join(__dirname, 'data', 'result_history.json');
@@ -28,35 +30,38 @@ function hitCount(group, draw) {
   return group.filter(n => set.has(n)).length;
 }
 
+function nowTaipei() {
+  const parts = new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+  const pick = (type) => parts.find(x => x.type === type)?.value || '';
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`;
+}
+
 function evaluateResult(resultMap) {
   const mainHits = [resultMap.group1, resultMap.group2, resultMap.group3, resultMap.group4];
-
-  if (mainHits.some(v => v >= 4)) {
-    return { label: '發財了各位', code: 'jackpot' };
-  }
-
+  if (mainHits.some(v => v >= 4)) return { label: '發財了各位', code: 'jackpot' };
   const hit2or3Count = mainHits.filter(v => v === 2 || v === 3).length;
-  if (hit2or3Count >= 2) {
-    return { label: '靠3.3倍', code: 'x33' };
-  }
-  if (hit2or3Count === 1) {
-    return { label: '再接再厲', code: 'retry' };
-  }
+  if (hit2or3Count >= 2) return { label: '靠3.3倍', code: 'x33' };
+  if (hit2or3Count === 1) return { label: '再接再厲', code: 'retry' };
   return { label: '恭喜過關', code: 'pass' };
 }
 
-function nowFull() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
-function buildResultMessage(lotteryTitle, draw, resultMap, finalLabel, weeklyText) {
+function buildResultMessage(lotteryTitle, trackingName, draw, resultMap, finalLabel) {
+  const nameBlock = trackingName ? [`通報名稱：${trackingName}`, ''] : [];
   return [
     `【拾柒追蹤系統｜${lotteryTitle} 開獎核對】`,
     '',
+    ...nameBlock,
     `核對狀態：已完成`,
-    `核對時間：${nowFull()}`,
+    `核對時間：${nowTaipei()}`,
     '',
     `本期開獎號碼：`,
     draw.join('、'),
@@ -69,16 +74,12 @@ function buildResultMessage(lotteryTitle, draw, resultMap, finalLabel, weeklyTex
     `全車號碼：中 ${resultMap.full} 顆`,
     '',
     `本期結果：`,
-    finalLabel,
-    '',
-    weeklyText
+    finalLabel
   ].join('\n');
 }
 
 async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, tracking, issueKey) {
-  if (!tracking || !tracking.groups) {
-    return { skipped: true, reason: 'no active tracking' };
-  }
+  if (!tracking || !tracking.groups) return { skipped: true, reason: 'no active tracking' };
 
   const state = readJson(RESULT_STATE_FILE, { '539': { lastIssue: null }, 'ttl': { lastIssue: null } });
   const key = lotteryType === 'ttl' ? 'ttl' : '539';
@@ -97,18 +98,19 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, trac
   };
 
   const evaluation = evaluateResult(resultMap);
-  const weekly = updateWeeklyStats(key, evaluation.label);
-  const weeklyText = buildWeeklySummaryText(key, weekly);
-  const message = buildResultMessage(lotteryTitle, draw, resultMap, evaluation.label, weeklyText);
+  updateWeeklyStats(key, evaluation.label);
+  updateFromResult(key, tracking, draw, resultMap, evaluation.label);
 
+  const message = buildResultMessage(lotteryTitle, tracking.trackingName || '', draw, resultMap, evaluation.label);
   await sendTelegramMessage(message, { timeoutMs: 8000 });
 
   const history = readJson(RESULT_HISTORY_FILE, []);
   history.push({
     lotteryType: key,
     lotteryTitle,
+    trackingName: tracking.trackingName || '',
     issueKey,
-    checkedAt: nowFull(),
+    checkedAt: nowTaipei(),
     draw,
     resultMap,
     finalLabel: evaluation.label,
@@ -117,11 +119,17 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, trac
   });
   writeJson(RESULT_HISTORY_FILE, history);
 
-  state[key] = {
-    lastIssue: issueKey,
-    lastCheckedAt: nowFull()
-  };
+  state[key] = { lastIssue: issueKey, lastCheckedAt: nowTaipei() };
   writeJson(RESULT_STATE_FILE, state);
+
+  const current = getActiveTracking(key);
+  if (current && current.id === tracking.id) {
+    current.status = 'completed';
+    current.completedAt = nowTaipei();
+    current.lastResult = evaluation.label;
+    current.lastIssue = issueKey;
+    setActiveTracking(key, current);
+  }
 
   return { ok: true, finalLabel: evaluation.label, resultMap };
 }
@@ -131,7 +139,4 @@ function getResultHistory(lotteryType) {
   return readJson(RESULT_HISTORY_FILE, []).filter(x => x.lotteryType === key);
 }
 
-module.exports = {
-  processTrackingResult,
-  getResultHistory
-};
+module.exports = { processTrackingResult, getResultHistory };
