@@ -7,6 +7,7 @@ const {
   setActiveTracking,
   normalizeLotteryType
 } = require('./trackingStore');
+const { formatTaipeiCompact, formatTaipeiDateTime } = require('./utils/time');
 
 const inflightByType = new Map();
 
@@ -15,7 +16,7 @@ function pad2(n) {
 }
 
 function nowIsoId() {
-  return new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  return formatTaipeiCompact();
 }
 
 function validateGroup(name, arr, expectedLen) {
@@ -53,7 +54,7 @@ function validatePayload(payload) {
   return {
     lotteryType,
     lotteryTitle: title,
-    confirmedAt: payload.confirmedAt || new Date().toISOString(),
+    confirmedAt: payload.confirmedAt || formatTaipeiDateTime(),
     trackType: 'system',
     labels: payload.labels || {
       group1: '第一組',
@@ -87,15 +88,15 @@ function validateManualPayload(payload) {
   return {
     lotteryType,
     lotteryTitle: title,
-    confirmedAt: payload.confirmedAt || new Date().toISOString(),
+    confirmedAt: payload.confirmedAt || formatTaipeiDateTime(),
     trackType: 'manual',
     sourceName,
     labels: {
-      group1: `${sourceName}｜第一組`,
-      group2: `${sourceName}｜第二組`,
-      group3: `${sourceName}｜第三組`,
-      group4: `${sourceName}｜第四組`,
-      full: `${sourceName}｜全車號碼`
+      group1: '第一組',
+      group2: '第二組',
+      group3: '第三組',
+      group4: '第四組',
+      full: '全車號碼'
     },
     groups: parsed
   };
@@ -107,7 +108,7 @@ function buildTrackingRecord(input) {
     lotteryType: input.lotteryType,
     lotteryTitle: input.lotteryTitle,
     confirmedAt: input.confirmedAt,
-    createdAt: new Date().toISOString(),
+    createdAt: formatTaipeiDateTime(),
     status: 'pending',
     trackType: input.trackType || 'system',
     sourceName: input.sourceName || '',
@@ -117,33 +118,26 @@ function buildTrackingRecord(input) {
 }
 
 function buildCreatedMessage(record) {
-  if (record.trackType === 'manual') {
-    return [
-      `【拾柒追蹤系統｜${record.lotteryTitle} 手動追蹤】`,
-      '',
-      `追蹤狀態：已建立`,
-      `通報來源：${record.sourceName || '未命名通報'}`,
-      `通報時間：${record.confirmedAt}`,
-      '',
-      `追蹤號碼：${record.groups.full.join('、')}`
-    ].join('\n');
-  }
-
-  return [
-    `【拾柒追蹤系統｜${record.lotteryTitle} 確定通報】`,
+  const lines = [
+    `【拾柒追蹤系統｜${record.lotteryTitle} ${record.trackType === 'manual' ? '手動追蹤' : '確定通報'}】`,
     '',
-    `通報狀態：已建立追蹤`,
+    `${record.trackType === 'manual' ? '追蹤狀態' : '通報狀態'}：已建立`,
+    ...(record.trackType === 'manual' ? [`通報來源：${record.sourceName || '未命名通報'}`] : []),
     `通報時間：${record.confirmedAt}`,
     '',
-    `本次追蹤分組：`,
     `${record.labels.group1}：${record.groups.group1.join('、')}`,
     `${record.labels.group2}：${record.groups.group2.join('、')}`,
     `${record.labels.group3}：${record.groups.group3.join('、')}`,
     `${record.labels.group4}：${record.groups.group4.join('、')}`,
-    `${record.labels.full}：${record.groups.full.join('、')}`,
-    '',
-    `說明：若同彩種於開獎前重新通報，系統將自動取消前一次系統追蹤，並以最新通報為準。手動追蹤則保留獨立追蹤。`
-  ].join('\n');
+    `${record.labels.full}：${record.groups.full.join('、')}`
+  ];
+
+  if (record.trackType !== 'manual') {
+    lines.push('');
+    lines.push('說明：若同彩種於開獎前重新通報，系統將自動取消前一次系統追蹤，並以最新通報為準。手動追蹤則保留獨立追蹤。');
+  }
+
+  return lines.join('\n');
 }
 
 function buildUpdatedMessage(record) {

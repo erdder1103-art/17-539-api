@@ -585,16 +585,36 @@
       .replaceAll("'","&#039;");
   }
 
+  function getTaipeiParts(){
+    const parts = new Intl.DateTimeFormat("zh-TW", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).formatToParts(new Date());
+    const pick = type => parts.find(x=>x.type===type)?.value || "";
+    return {
+      year: pick("year"),
+      month: pick("month"),
+      day: pick("day"),
+      hour: pick("hour"),
+      minute: pick("minute"),
+      second: pick("second")
+    };
+  }
+
   function nowStr(){
-    const d = new Date();
-    const p = n => String(n).padStart(2,"0");
-    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const t = getTaipeiParts();
+    return `${t.hour}:${t.minute}:${t.second}`;
   }
 
   function nowFull(){
-    const d = new Date();
-    const p = n => String(n).padStart(2,"0");
-    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const t = getTaipeiParts();
+    return `${t.year}-${t.month}-${t.day} ${t.hour}:${t.minute}:${t.second}`;
   }
 
   function setTaipeiClock(){
@@ -1859,14 +1879,20 @@
     showMiniNotice(`${s.cfg.title}：CSV 已匯出（橫向）`, "ok");
   }
 
+  function downloadServerLogsXlsx(fileName = "logs.xlsx"){
+    const a = document.createElement("a");
+    a.href = `${API_BASE}/api/logs.xlsx?_t=${Date.now()}`;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   function exportXlsx(id, fileName = "logs.xlsx"){
     const s = state.lotteries[id];
-    if (typeof XLSX === "undefined"){
-      showMiniNotice("XLSX 函式庫尚未載入，無法匯出 Excel", "warn");
-      return;
-    }
-    if (s.log.length === 0){
-      showMiniNotice(`${s.cfg.title}：沒有紀錄可匯出`, "warn");
+    if (typeof XLSX === "undefined" || s.log.length === 0){
+      downloadServerLogsXlsx(fileName);
+      showMiniNotice(`${s.cfg.title}：改由伺服器匯出 ${fileName}`, "info");
       return;
     }
 

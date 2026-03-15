@@ -9,6 +9,8 @@ const { confirmTracking, confirmManualTracking, getTrackingOverview } = require(
 const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
+const { formatTaipeiDateTime } = require('./utils/time');
+const { generateLogsWorkbook } = require('./exportService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +33,7 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 let cache539 = [];
 let cacheTTL = [];
 let lastUpdate = null;
+let isUpdating = false;
 
 function pad2(n) { return String(Number(n)).padStart(2, '0'); }
 function isValidFive(nums) {
@@ -102,6 +105,7 @@ async function handleAutoCheck(type, title, list) {
   try {
     const issueKey = `${latest.issue}|${latest.date}|${latest.numbers.join('-')}`;
     await processTrackingResult(type, title, latest.numbers, issueKey);
+    generateLogsWorkbook();
     console.log(`${title} 自動核對完成：${issueKey}`);
   } catch (err) {
     console.error(`${title} 自動核對失敗：`, err.message);
@@ -138,32 +142,60 @@ async function updateTTL() {
   }
 }
 async function updateAll() {
-  await Promise.all([update539(), updateTTL()]);
-  lastUpdate = new Date().toISOString();
+  if (isUpdating) return;
+  isUpdating = true;
+  try {
+    await Promise.all([update539(), updateTTL()]);
+    lastUpdate = formatTaipeiDateTime();
+    generateLogsWorkbook();
+  } finally {
+    isUpdating = false;
+  }
 }
 
-app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, count: cache539.length, draws: cache539 }));
-app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, count: cacheTTL.length, draws: cacheTTL }));
-app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
-app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate }));
+app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, timezone: 'Asia/Taipei', count: cache539.length, draws: cache539 }));
+app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, timezone: 'Asia/Taipei', count: cacheTTL.length, draws: cacheTTL }));
+app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, timezone: 'Asia/Taipei', lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
+app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate, timezone: 'Asia/Taipei', isUpdating }));
 app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
 app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
+app.get('/api/logs.xlsx', (req, res) => {
+  try {
+    const filePath = generateLogsWorkbook();
+    res.download(filePath, 'logs.xlsx');
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
 
 app.post('/api/confirm-tracking', async (req, res) => {
-  try { res.json(await confirmTracking(req.body || {})); }
+  try {
+    const result = await confirmTracking(req.body || {});
+    generateLogsWorkbook();
+    res.json(result);
+  }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }
 });
 app.post('/api/manual-tracking', async (req, res) => {
-  try { res.json(await confirmManualTracking(req.body || {})); }
+  try {
+    const result = await confirmManualTracking(req.body || {});
+    generateLogsWorkbook();
+    res.json(result);
+  }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }
 });
+
+process.on('unhandledRejection', (err) => console.error('unhandledRejection:', err));
+process.on('uncaughtException', (err) => console.error('uncaughtException:', err));
 
 app.listen(PORT, async () => {
   console.log(`API Server running http://localhost:${PORT}`);
   await updateAll();
-  setInterval(updateAll, 120 * 1000);
+  setInterval(() => {
+    updateAll().catch((err) => console.error('updateAll failed:', err.message));
+  }, 120 * 1000);
 });

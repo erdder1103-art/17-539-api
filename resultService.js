@@ -3,6 +3,7 @@ const path = require('path');
 const { sendTelegramMessage } = require('./telegram');
 const { updateWeeklyStats, buildWeeklySummaryText, getWeekKey } = require('./weekStats');
 const { getActiveTrackings, settleTracking } = require('./trackingStore');
+const { formatTaipeiDateTime } = require('./utils/time');
 
 const RESULT_STATE_FILE = path.join(__dirname, 'data', 'result_state.json');
 const RESULT_HISTORY_FILE = path.join(__dirname, 'data', 'result_history.json');
@@ -40,12 +41,10 @@ function evaluateResult(resultMap) {
 }
 
 function nowFull() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return formatTaipeiDateTime();
 }
 
-function buildResultMap(groups, trackType) {
+function buildResultMap(groups) {
   return {
     group1: hitCount(groups.group1 || [], groups.__draw || []),
     group2: hitCount(groups.group2 || [], groups.__draw || []),
@@ -95,22 +94,12 @@ function buildResultMessage(lotteryTitle, draw, tracking, resultMap, finalLabel,
     ''
   ];
 
-  if (tracking.trackType === 'manual') {
-    lines.push('手動追蹤命中結果：');
-    lines.push(`${tracking.labels?.group1 || '第一組'}：中 ${resultMap.group1} 顆`);
-    lines.push(`${tracking.labels?.group2 || '第二組'}：中 ${resultMap.group2} 顆`);
-    lines.push(`${tracking.labels?.group3 || '第三組'}：中 ${resultMap.group3} 顆`);
-    lines.push(`${tracking.labels?.group4 || '第四組'}：中 ${resultMap.group4} 顆`);
-    lines.push(`${tracking.labels?.full || '全車號碼'}：中 ${resultMap.full} 顆`);
-  } else {
-    lines.push('各組命中結果：');
-    lines.push(`第一組：中 ${resultMap.group1} 顆`);
-    lines.push(`第二組：中 ${resultMap.group2} 顆`);
-    lines.push(`第三組：中 ${resultMap.group3} 顆`);
-    lines.push(`第四組：中 ${resultMap.group4} 顆`);
-    lines.push(`全車號碼：中 ${resultMap.full} 顆`);
-  }
-
+  lines.push('各組命中結果：');
+  lines.push(`${tracking.labels?.group1 || '第一組'}：中 ${resultMap.group1} 顆`);
+  lines.push(`${tracking.labels?.group2 || '第二組'}：中 ${resultMap.group2} 顆`);
+  lines.push(`${tracking.labels?.group3 || '第三組'}：中 ${resultMap.group3} 顆`);
+  lines.push(`${tracking.labels?.group4 || '第四組'}：中 ${resultMap.group4} 顆`);
+  lines.push(`${tracking.labels?.full || '全車號碼'}：中 ${resultMap.full} 顆`);
   lines.push('');
   lines.push('本期結果：');
   lines.push(finalLabel);
@@ -139,7 +128,7 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
 
   for (const tracking of active) {
     const groups = { ...(tracking.groups || {}), __draw: draw };
-    const resultMap = buildResultMap(groups, tracking.trackType);
+    const resultMap = buildResultMap(groups);
     const evaluation = evaluateResult(resultMap);
     const weekly = tracking.trackType === 'system' ? updateWeeklyStats(key, evaluation.label) : null;
     const weeklyText = tracking.trackType === 'system' ? buildWeeklySummaryText(key, weekly) : '手動追蹤已完成核對';

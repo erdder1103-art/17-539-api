@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { formatTaipeiDateTime } = require('./utils/time');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const TRACKING_FILE = path.join(DATA_DIR, 'tracking.json');
@@ -104,7 +105,7 @@ function cancelTrackingById(lotteryType, trackingId, reason = 'replaced') {
     ...current,
     status: 'cancelled',
     cancelReason: reason,
-    cancelledAt: new Date().toISOString()
+    cancelledAt: formatTaipeiDateTime()
   };
   appendHistory(cancelled);
   map[key] = state;
@@ -153,7 +154,7 @@ function settleTracking(lotteryType, trackingId, settlement) {
   const settled = {
     ...current,
     status: 'settled',
-    settledAt: new Date().toISOString(),
+    settledAt: formatTaipeiDateTime(),
     settlement: settlement || null
   };
   appendHistory(settled);

@@ -1,11 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const { getTaipeiDate, getTaipeiWeekday } = require('./utils/time');
 
 const FILE = path.join(__dirname, 'data', 'weekly_stats.json');
 const WEEK_539 = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 const WEEK_TTL = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
 
-function getWeekKey(date = new Date()) {
+function getWeekKey(date = getTaipeiDate()) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
@@ -64,16 +65,11 @@ function ensureWeek(record, type) {
   return record;
 }
 
-function weekdayText() {
-  const map = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
-  return map[new Date().getDay()];
-}
-
 function updateWeeklyStats(type, resultLabel) {
   const key = type === 'ttl' ? 'ttl' : '539';
   const store = readStore();
   store[key] = ensureWeek(store[key], key);
-  store[key].daily[weekdayText()] = resultLabel;
+  store[key].daily[getTaipeiWeekday()] = resultLabel;
 
   if (resultLabel === '恭喜過關') store[key].summary.passed += 1;
   else if (resultLabel === '再接再厲') store[key].summary.retry += 1;
