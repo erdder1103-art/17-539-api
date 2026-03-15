@@ -1,0 +1,1 @@
+這版只修正 telegram.js：補回 BOT_TOKEN / TG_CHAT_ID fallback，避免 Railway 未設環境變數時出現缺少 BOT_TOKEN。\n

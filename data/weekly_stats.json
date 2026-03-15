@@ -1,0 +1,32 @@
+{
+  "539": {
+    "current": {
+      "week": "0000-W00",
+      "summary": {
+        "passed": 0,
+        "fail": 0,
+        "retry": 0,
+        "x33": 0,
+        "jackpot": 0
+      },
+      "daily": {},
+      "type": "539"
+    },
+    "history": {}
+  },
+  "ttl": {
+    "current": {
+      "week": "0000-W00",
+      "summary": {
+        "passed": 0,
+        "fail": 0,
+        "retry": 0,
+        "x33": 0,
+        "jackpot": 0
+      },
+      "daily": {},
+      "type": "ttl"
+    },
+    "history": {}
+  }
+}
