@@ -11,11 +11,7 @@ function emptyType(type) {
     finalCounts: { pass: 0, retry: 0, x33: 0, jackpot: 0 },
     numberPenalty: {},
     pairPenalty: {},
-    groupPenalty: {
-      bucket: { '1': 0, '2': 0, '3': 0, '4': 0 },
-      tail: {},
-      adjacency: 0
-    },
+    groupPenalty: { bucket: { '1': 0, '2': 0, '3': 0, '4': 0 }, tail: {}, adjacency: 0 },
     recentBadShots: []
   };
 }
@@ -138,28 +134,14 @@ function updateFromResult(type, tracking, draw, resultMap, finalLabel) {
         if (b - a === 2) w.groupPenalty.adjacency += 0.3 * severity;
       }
 
-      w.recentBadShots.unshift({
-        at: nowTaipei(),
-        group: name,
-        hit,
-        numbers: nums,
-        draw
-      });
+      w.recentBadShots.unshift({ at: nowTaipei(), group: name, hit, numbers: nums, draw });
     });
     w.recentBadShots = w.recentBadShots.slice(0, 30);
   } else {
-    Object.keys(w.numberPenalty).forEach(k => {
-      w.numberPenalty[k] = Math.max(0, Number(w.numberPenalty[k] || 0) * 0.995);
-    });
-    Object.keys(w.pairPenalty).forEach(k => {
-      w.pairPenalty[k] = Math.max(0, Number(w.pairPenalty[k] || 0) * 0.992);
-    });
-    Object.keys(w.groupPenalty.bucket).forEach(k => {
-      w.groupPenalty.bucket[k] = Math.max(0, Number(w.groupPenalty.bucket[k] || 0) * 0.99);
-    });
-    Object.keys(w.groupPenalty.tail).forEach(k => {
-      w.groupPenalty.tail[k] = Math.max(0, Number(w.groupPenalty.tail[k] || 0) * 0.99);
-    });
+    Object.keys(w.numberPenalty).forEach(k => { w.numberPenalty[k] = Math.max(0, Number(w.numberPenalty[k] || 0) * 0.995); });
+    Object.keys(w.pairPenalty).forEach(k => { w.pairPenalty[k] = Math.max(0, Number(w.pairPenalty[k] || 0) * 0.992); });
+    Object.keys(w.groupPenalty.bucket).forEach(k => { w.groupPenalty.bucket[k] = Math.max(0, Number(w.groupPenalty.bucket[k] || 0) * 0.99); });
+    Object.keys(w.groupPenalty.tail).forEach(k => { w.groupPenalty.tail[k] = Math.max(0, Number(w.groupPenalty.tail[k] || 0) * 0.99); });
     w.groupPenalty.adjacency = Math.max(0, Number(w.groupPenalty.adjacency || 0) * 0.99);
   }
 
@@ -170,20 +152,17 @@ function updateFromResult(type, tracking, draw, resultMap, finalLabel) {
 
 function getWeights(type) {
   const key = type === 'ttl' ? 'ttl' : '539';
-  const store = readStore();
-  return store[key] || emptyType(key);
+  return readStore()[key] || emptyType(key);
 }
 
 function summarizeWeights(type) {
   const w = getWeights(type);
-  const topNumbers = Object.entries(w.numberPenalty || {}).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const topPairs = Object.entries(w.pairPenalty || {}).sort((a,b)=>b[1]-a[1]).slice(0,10);
   return {
     updatedAt: w.updatedAt,
     sampleCount: w.sampleCount,
     finalCounts: w.finalCounts,
-    topNumbers,
-    topPairs,
+    topNumbers: Object.entries(w.numberPenalty || {}).sort((a,b)=>b[1]-a[1]).slice(0,10),
+    topPairs: Object.entries(w.pairPenalty || {}).sort((a,b)=>b[1]-a[1]).slice(0,10),
     groupPenalty: w.groupPenalty,
     recentBadShots: (w.recentBadShots || []).slice(0,8)
   };

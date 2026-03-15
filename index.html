@@ -995,7 +995,8 @@
       rolling: false,
       lastSyncHash: "",
       timer: null,
-      restoredHistoryText: ""
+      restoredHistoryText: "",
+      learningWeights: null
     };
   }
 
@@ -1522,6 +1523,7 @@
       counts,
       drawCount,
       draws,
+      learningWeights: state.lotteries[id]?.learningWeights || null,
       hot,
       cold,
       hotRank,
@@ -1536,14 +1538,12 @@
   async function fetchLearningWeights(id){
     const type = id === "ttl" ? "ttl" : "539";
     try{
-      const res = await fetch(`/api/learning/${type}`);
-      const data = await res.json();
-      if(res.ok && data?.ok){
-        state.lotteries[id].learningWeights = data.weights || null;
-        return data.weights || null;
-      }
-    }catch(err){}
-    return null;
+      const data = await fetchJsonSafe(`/api/learning/${type}`);
+      state.lotteries[id].learningWeights = data.weights || null;
+      return data.weights || null;
+    }catch(err){
+      return null;
+    }
   }
 
   function renderHistoryAnalysis(id, analysis){
@@ -2532,11 +2532,11 @@
       setAutoState(id);
     }
 
+    await fetchLearningWeights(id);
     const ok = await syncHistory(id, true);
     if(!ok && restored){
       renderRestoredState(id);
     }
-    await fetchLearningWeights(id);
     await loadWeeklySummary(id);
     startAutoTimer(id);
   }
