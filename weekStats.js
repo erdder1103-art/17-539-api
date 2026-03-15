@@ -14,53 +14,54 @@ function getWeekKey(date = new Date()) {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
-function baseSummary(){ return { passed: 0, fail: 0, retry: 0, x33: 0, jackpot: 0 }; }
-function createWeekRecord(type, week){ return { week: week || getWeekKey(), summary: baseSummary(), daily: {}, type }; }
-function createTypeStore(type){ return { current: createWeekRecord(type, getWeekKey()), history: {} }; }
-
-function normalize(data){
-  for(const key of ['539','ttl']){
-    if(!data[key]) data[key] = createTypeStore(key);
-    if(data[key].week){ // old flat format compatibility
-      const old = data[key];
-      data[key] = {
-        current: {
-          week: old.week || getWeekKey(),
-          summary: old.summary || baseSummary(),
-          daily: old.daily || {},
-          type: key
-        },
-        history: old.history || {}
-      };
-    }
-    if(!data[key].current) data[key].current = createWeekRecord(key, getWeekKey());
-    if(!data[key].history) data[key].history = {};
-    if(!data[key].current.summary) data[key].current.summary = baseSummary();
-    if(!data[key].current.daily) data[key].current.daily = {};
-  }
-  return data;
+function createEmpty(type) {
+  return {
+    week: getWeekKey(),
+    summary: {
+      passed: 0,
+      retry: 0,
+      x33: 0,
+      jackpot: 0
+    },
+    daily: {},
+    type
+  };
 }
 
 function readStore() {
   try {
-    if (!fs.existsSync(FILE)) return normalize({ '539': createTypeStore('539'), 'ttl': createTypeStore('ttl') });
-    return normalize(JSON.parse(fs.readFileSync(FILE, 'utf8')));
+    if (!fs.existsSync(FILE)) {
+      return { '539': createEmpty('539'), 'ttl': createEmpty('ttl') };
+    }
+    const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    ['539', 'ttl'].forEach((key) => {
+      if (!parsed[key]) parsed[key] = createEmpty(key);
+      if (parsed[key].summary && typeof parsed[key].summary.fail === 'number') {
+        delete parsed[key].summary.fail;
+      }
+      parsed[key].summary = {
+        passed: parsed[key].summary.passed || 0,
+        retry: parsed[key].summary.retry || 0,
+        x33: parsed[key].summary.x33 || 0,
+        jackpot: parsed[key].summary.jackpot || 0
+      };
+    });
+    return parsed;
   } catch (err) {
-    return normalize({ '539': createTypeStore('539'), 'ttl': createTypeStore('ttl') });
+    return { '539': createEmpty('539'), 'ttl': createEmpty('ttl') };
   }
 }
 
 function writeStore(data) {
-  fs.writeFileSync(FILE, JSON.stringify(normalize(data), null, 2), 'utf8');
+  fs.writeFileSync(FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function ensureWeek(typeStore, type) {
+function ensureWeek(record, type) {
   const nowKey = getWeekKey();
-  if (typeStore.current.week !== nowKey) {
-    if(typeStore.current.week) typeStore.history[typeStore.current.week] = typeStore.current;
-    typeStore.current = createWeekRecord(type, nowKey);
+  if (!record || record.week !== nowKey) {
+    return createEmpty(type);
   }
-  return typeStore;
+  return record;
 }
 
 function weekdayText() {
@@ -72,14 +73,15 @@ function updateWeeklyStats(type, resultLabel) {
   const key = type === 'ttl' ? 'ttl' : '539';
   const store = readStore();
   store[key] = ensureWeek(store[key], key);
-  store[key].current.daily[weekdayText()] = resultLabel;
-  if (resultLabel === '恭喜過關') store[key].current.summary.passed += 1;
-  else if (resultLabel === '沒過') store[key].current.summary.fail += 1;
-  else if (resultLabel === '再接再厲') store[key].current.summary.retry += 1;
-  else if (resultLabel === '靠3.3倍') store[key].current.summary.x33 += 1;
-  else if (resultLabel === '發財了各位') store[key].current.summary.jackpot += 1;
+  store[key].daily[weekdayText()] = resultLabel;
+
+  if (resultLabel === '恭喜過關') store[key].summary.passed += 1;
+  else if (resultLabel === '再接再厲') store[key].summary.retry += 1;
+  else if (resultLabel === '靠3.3倍') store[key].summary.x33 += 1;
+  else if (resultLabel === '發財了各位') store[key].summary.jackpot += 1;
+
   writeStore(store);
-  return store[key].current;
+  return store[key];
 }
 
 function getWeeklyStats(type) {
@@ -87,24 +89,7 @@ function getWeeklyStats(type) {
   const store = readStore();
   store[key] = ensureWeek(store[key], key);
   writeStore(store);
-  return store[key].current;
-}
-
-function getWeeklyByWeek(type, week) {
-  const key = type === 'ttl' ? 'ttl' : '539';
-  const store = readStore();
-  store[key] = ensureWeek(store[key], key);
-  writeStore(store);
-  if (!week || store[key].current.week === week) return store[key].current;
-  return store[key].history[week] || null;
-}
-
-function listWeeklyHistory(type) {
-  const key = type === 'ttl' ? 'ttl' : '539';
-  const store = readStore();
-  store[key] = ensureWeek(store[key], key);
-  writeStore(store);
-  return Array.from(new Set([store[key].current.week, ...Object.keys(store[key].history).sort().reverse()]));
+  return store[key];
 }
 
 function buildWeeklySummaryText(type, weekly) {
@@ -112,9 +97,9 @@ function buildWeeklySummaryText(type, weekly) {
   const title = key === 'ttl' ? '天天樂' : '539';
   const days = key === 'ttl' ? WEEK_TTL : WEEK_539;
   const data = weekly || getWeeklyStats(key);
+
   const lines = [
     `【${title} 本周成果】`,
-    `週別：${data.week}`,
     '',
     `恭喜過關：${data.summary.passed}次`,
     `再接再厲：${data.summary.retry}次`,
@@ -122,8 +107,17 @@ function buildWeeklySummaryText(type, weekly) {
     `發財了各位：${data.summary.jackpot}次`,
     ''
   ];
-  days.forEach(day => lines.push(`${day}：${data.daily[day] || ''}`));
+
+  days.forEach(day => {
+    lines.push(`${day}：${data.daily[day] || ''}`);
+  });
+
   return lines.join('\n');
 }
 
-module.exports = { getWeekKey, updateWeeklyStats, getWeeklyStats, getWeeklyByWeek, listWeeklyHistory, buildWeeklySummaryText };
+module.exports = {
+  getWeekKey,
+  updateWeeklyStats,
+  getWeeklyStats,
+  buildWeeklySummaryText
+};

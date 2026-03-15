@@ -1,32 +1,26 @@
 {
   "539": {
-    "current": {
-      "week": "0000-W00",
-      "summary": {
-        "passed": 0,
-        "fail": 0,
-        "retry": 0,
-        "x33": 0,
-        "jackpot": 0
-      },
-      "daily": {},
-      "type": "539"
+    "week": "0000-W00",
+    "summary": {
+      "passed": 0,
+      "fail": 0,
+      "retry": 0,
+      "x33": 0,
+      "jackpot": 0
     },
-    "history": {}
+    "daily": {},
+    "type": "539"
   },
   "ttl": {
-    "current": {
-      "week": "0000-W00",
-      "summary": {
-        "passed": 0,
-        "fail": 0,
-        "retry": 0,
-        "x33": 0,
-        "jackpot": 0
-      },
-      "daily": {},
-      "type": "ttl"
+    "week": "0000-W00",
+    "summary": {
+      "passed": 0,
+      "fail": 0,
+      "retry": 0,
+      "x33": 0,
+      "jackpot": 0
     },
-    "history": {}
+    "daily": {},
+    "type": "ttl"
   }
 }

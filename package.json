@@ -1,6 +1,6 @@
 {
   "name": "lottery-tracking-system",
-  "version": "3.0.2",
+  "version": "2.3.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
