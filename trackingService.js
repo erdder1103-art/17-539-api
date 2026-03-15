@@ -9,7 +9,7 @@ const {
 } = require('./trackingStore');
 const { formatTaipeiCompact, formatTaipeiDateTime } = require('./utils/time');
 
-const inflightByType = new Map();
+const inflightByKey = new Map();
 
 function pad2(n) {
   return String(parseInt(n, 10)).padStart(2, '0');
@@ -34,27 +34,33 @@ function validateGroup(name, arr, expectedLen) {
   return nums.map(pad2);
 }
 
-function validatePayload(payload) {
-  const lotteryType = normalizeLotteryType(payload.lotteryType);
-  const groups = payload.groups || {};
-  const parsed = {
+function normalizeGroups(groups) {
+  return {
     group1: validateGroup('第一組', groups.group1 || [], 5),
     group2: validateGroup('第二組', groups.group2 || [], 5),
     group3: validateGroup('第三組', groups.group3 || [], 5),
     group4: validateGroup('第四組', groups.group4 || [], 5),
     full: validateGroup('全車號碼', groups.full || [])
   };
+}
 
+function ensureMainGroupsUnique(parsed, labelPrefix = '') {
   const allMain = [...parsed.group1, ...parsed.group2, ...parsed.group3, ...parsed.group4];
   if (new Set(allMain).size !== allMain.length) {
-    throw new Error('第一組到第四組之間不可重複號碼');
+    throw new Error(`${labelPrefix}第一組到第四組之間不可重複號碼`);
   }
+}
+
+function validatePayload(payload) {
+  const lotteryType = normalizeLotteryType(payload.lotteryType);
+  const groups = normalizeGroups(payload.groups || {});
+  ensureMainGroupsUnique(groups);
 
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
   return {
     lotteryType,
     lotteryTitle: title,
-    confirmedAt: payload.confirmedAt || formatTaipeiDateTime(),
+    confirmedAt: formatTaipeiDateTime(),
     trackType: 'system',
     labels: payload.labels || {
       group1: '第一組',
@@ -63,32 +69,21 @@ function validatePayload(payload) {
       group4: '第四組',
       full: '全車號碼'
     },
-    groups: parsed
+    groups
   };
 }
 
 function validateManualPayload(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
-  const groups = payload.groups || {};
   const sourceName = String(payload.sourceName || '').trim() || '未命名通報';
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
-  const parsed = {
-    group1: validateGroup('手動第一組', groups.group1 || [], 5),
-    group2: validateGroup('手動第二組', groups.group2 || [], 5),
-    group3: validateGroup('手動第三組', groups.group3 || [], 5),
-    group4: validateGroup('手動第四組', groups.group4 || [], 5),
-    full: validateGroup('手動全車號碼', groups.full || [])
-  };
-
-  const allMain = [...parsed.group1, ...parsed.group2, ...parsed.group3, ...parsed.group4];
-  if (new Set(allMain).size !== allMain.length) {
-    throw new Error('手動第一組到第四組之間不可重複號碼');
-  }
+  const groups = normalizeGroups(payload.groups || {});
+  ensureMainGroupsUnique(groups, '手動');
 
   return {
     lotteryType,
     lotteryTitle: title,
-    confirmedAt: payload.confirmedAt || formatTaipeiDateTime(),
+    confirmedAt: formatTaipeiDateTime(),
     trackType: 'manual',
     sourceName,
     labels: {
@@ -98,17 +93,18 @@ function validateManualPayload(payload) {
       group4: '第四組',
       full: '全車號碼'
     },
-    groups: parsed
+    groups
   };
 }
 
 function buildTrackingRecord(input) {
+  const now = formatTaipeiDateTime();
   return {
     id: `${input.lotteryType}_${input.trackType}_${nowIsoId()}`,
     lotteryType: input.lotteryType,
     lotteryTitle: input.lotteryTitle,
-    confirmedAt: input.confirmedAt,
-    createdAt: formatTaipeiDateTime(),
+    confirmedAt: now,
+    createdAt: now,
     status: 'pending',
     trackType: input.trackType || 'system',
     sourceName: input.sourceName || '',
@@ -144,11 +140,11 @@ function buildUpdatedMessage(record) {
   return [
     `【拾柒追蹤系統｜${record.lotteryTitle} 通報更新】`,
     '',
-    `追蹤狀態：已更新`,
+    '追蹤狀態：已更新',
     `更新時間：${record.confirmedAt}`,
     '',
     `系統已取消上一筆尚未開獎的 ${record.lotteryTitle} 系統追蹤，`,
-    `目前改為追蹤以下最新分組：`,
+    '目前改為追蹤以下最新分組：',
     '',
     `${record.labels.group1}：${record.groups.group1.join('、')}`,
     `${record.labels.group2}：${record.groups.group2.join('、')}`,
@@ -158,17 +154,27 @@ function buildUpdatedMessage(record) {
   ].join('\n');
 }
 
-function fireAndForgetTelegram(text, type) {
-  sendTelegramMessage(text, { timeoutMs: 8000 })
-    .catch((err) => console.error(`[${type}] telegram failed:`, err.message))
-    .finally(() => inflightByType.delete(type));
+function groupsFingerprint(record) {
+  const g = record.groups || {};
+  return [g.group1, g.group2, g.group3, g.group4, g.full]
+    .map((arr) => (Array.isArray(arr) ? arr.join('-') : ''))
+    .join('|');
+}
+
+function isDuplicateManualTracking(input) {
+  const active = getActiveTrackings(input.lotteryType).filter((row) => row.trackType === 'manual' && row.status === 'pending');
+  const targetFp = groupsFingerprint(input);
+  return active.some((row) => {
+    return String(row.sourceName || '') === String(input.sourceName || '') && groupsFingerprint(row) === targetFp;
+  });
 }
 
 async function confirmTracking(payload) {
   const parsed = validatePayload(payload);
   const type = parsed.lotteryType;
+  const lockKey = `system:${type}`;
 
-  if (inflightByType.get(type)) {
+  if (inflightByKey.get(lockKey)) {
     return {
       ok: true,
       busy: true,
@@ -177,42 +183,77 @@ async function confirmTracking(payload) {
     };
   }
 
-  const current = getActiveTracking(type);
-  let replacedOldTracking = false;
-  if (current && current.status === 'pending') {
-    cancelActiveTracking(type, 'replaced-before-draw');
-    replacedOldTracking = true;
+  inflightByKey.set(lockKey, true);
+  try {
+    const current = getActiveTracking(type);
+    const replacedOldTracking = Boolean(current && current.status === 'pending');
+    const record = buildTrackingRecord(parsed);
+    const messageText = replacedOldTracking ? buildUpdatedMessage(record) : buildCreatedMessage(record);
+
+    await sendTelegramMessage(messageText, { timeoutMs: 8000 });
+
+    if (replacedOldTracking) {
+      cancelActiveTracking(type, 'replaced-before-draw');
+    }
+    setActiveTracking(type, record);
+
+    return {
+      ok: true,
+      busy: false,
+      replacedOldTracking,
+      telegramSent: true,
+      tracking: record,
+      message: replacedOldTracking
+        ? `${parsed.lotteryTitle} 已取消上一期未開獎系統通報，並更新為最新追蹤`
+        : `${parsed.lotteryTitle} 已建立追蹤並送出通報`
+    };
+  } catch (err) {
+    throw new Error(`Telegram 發送失敗：${err.message}`);
+  } finally {
+    inflightByKey.delete(lockKey);
   }
-
-  const record = buildTrackingRecord(parsed);
-  setActiveTracking(type, record);
-
-  inflightByType.set(type, true);
-  fireAndForgetTelegram(replacedOldTracking ? buildUpdatedMessage(record) : buildCreatedMessage(record), type);
-
-  return {
-    ok: true,
-    busy: false,
-    replacedOldTracking,
-    tracking: record,
-    message: replacedOldTracking
-      ? `${parsed.lotteryTitle} 已取消上一期未開獎系統通報，並更新為最新追蹤`
-      : `${parsed.lotteryTitle} 已建立追蹤並送出通報`
-  };
 }
 
 async function confirmManualTracking(payload) {
   const parsed = validateManualPayload(payload);
-  const record = buildTrackingRecord(parsed);
-  setActiveTracking(parsed.lotteryType, record);
-  sendTelegramMessage(buildCreatedMessage(record), { timeoutMs: 8000 }).catch((err) => {
-    console.error(`[${parsed.lotteryType}] manual telegram failed:`, err.message);
-  });
-  return {
-    ok: true,
-    tracking: record,
-    message: `${parsed.lotteryTitle} 已新增手動追蹤：${record.sourceName}`
-  };
+  const lockKey = `manual:${parsed.lotteryType}`;
+
+  if (inflightByKey.get(lockKey)) {
+    return {
+      ok: true,
+      busy: true,
+      telegramSent: false,
+      message: `${parsed.lotteryTitle} 手動追蹤處理中，請勿重複點擊`
+    };
+  }
+
+  if (isDuplicateManualTracking(parsed)) {
+    return {
+      ok: false,
+      duplicate: true,
+      telegramSent: false,
+      message: `${parsed.lotteryTitle} 手動追蹤已存在，相同來源與分組不重複建立`
+    };
+  }
+
+  inflightByKey.set(lockKey, true);
+  try {
+    const record = buildTrackingRecord(parsed);
+    await sendTelegramMessage(buildCreatedMessage(record), { timeoutMs: 8000 });
+    setActiveTracking(parsed.lotteryType, record);
+    return {
+      ok: true,
+      busy: false,
+      duplicate: false,
+      telegramSent: true,
+      tracking: record,
+      message: `${parsed.lotteryTitle} 已新增手動追蹤：${record.sourceName}`
+    };
+  } catch (err) {
+    throw new Error(`Telegram 發送失敗：${err.message}`);
+  } finally {
+    inflightByKey.delete(lockKey);
+  }
 }
 
 function getTrackingOverview(lotteryType) {

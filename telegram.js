@@ -1,22 +1,20 @@
 const fetch = require('node-fetch');
 
 function getBotConfig() {
-  const token =
-    process.env.BOT_TOKEN ||
-    "8724288146:AAFUItEZqR_jWTn6vr3xCxEM-3Bg_9y2gMY";
+  const token = String(process.env.BOT_TOKEN || '').trim();
+  const chatId = String(process.env.TG_CHAT_ID || '').trim();
+  return { token, chatId };
+}
 
-  const chatId =
-    process.env.TG_CHAT_ID ||
-    "-5292559147";
-
+function assertBotConfig() {
+  const { token, chatId } = getBotConfig();
+  if (!token) throw new Error('缺少 BOT_TOKEN 環境變數');
+  if (!chatId) throw new Error('缺少 TG_CHAT_ID 環境變數');
   return { token, chatId };
 }
 
 async function sendTelegramMessage(text, options = {}) {
-  const { token, chatId } = getBotConfig();
-  if (!token) throw new Error('缺少 BOT_TOKEN');
-  if (!chatId) throw new Error('缺少 TG_CHAT_ID');
-
+  const { token, chatId } = assertBotConfig();
   const timeoutMs = Number(options.timeoutMs || process.env.TG_TIMEOUT_MS || 8000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -49,4 +47,4 @@ async function sendTelegramMessage(text, options = {}) {
   }
 }
 
-module.exports = { sendTelegramMessage };
+module.exports = { sendTelegramMessage, getBotConfig, assertBotConfig };
