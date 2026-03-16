@@ -2533,6 +2533,7 @@ function bindEvents(id){
     $(`${id}_btnManualTracking`).addEventListener("click", ()=>submitManualTracking(id));
     $(`${id}_btnRefreshTracking`).addEventListener("click", ()=>refreshTrackingBoard(id));
     $(`${id}_btnTelegramTest`).addEventListener("click", ()=>testTelegram(id));
+    $(`${id}_btnSaveTelegramConfig`).addEventListener("click", ()=>saveTelegramConfig(id));
 
     $(`${id}_btnGenerateSmart`).addEventListener("click", ()=>{
       const text = getEls(id).historyInput.value.trim();
