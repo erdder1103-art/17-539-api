@@ -137,6 +137,27 @@ function buildCreatedMessage(record) {
   return lines.join('\n');
 }
 
+
+function buildCancelledMessage(record) {
+  const statusLabel = record.trackType === 'manual' ? '手動追蹤取消' : '系統追蹤取消';
+  const lines = [
+    `【拾柒追蹤系統｜${record.lotteryTitle} ${statusLabel}】`,
+    '',
+    '追蹤狀態：已取消',
+    ...(record.trackType === 'manual' ? [`通報來源：${record.sourceName || '未命名通報'}`] : []),
+    `取消時間：${record.cancelledAt || formatTaipeiDateTime()}`,
+    ...(record.cancelReason ? [`取消原因：${record.cancelReason}`] : []),
+    '',
+    `${record.labels.group1}：${record.groups.group1.join('、')}`,
+    `${record.labels.group2}：${record.groups.group2.join('、')}`,
+    `${record.labels.group3}：${record.groups.group3.join('、')}`,
+    `${record.labels.group4}：${record.groups.group4.join('、')}`,
+    `${record.labels.full}：${record.groups.full.join('、')}`
+  ];
+  return lines.join('
+');
+}
+
 function buildUpdatedMessage(record) {
   return [
     `【拾柒追蹤系統｜${record.lotteryTitle} 通報更新】`,
