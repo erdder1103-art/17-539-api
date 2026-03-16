@@ -154,8 +154,8 @@ function buildCancelledMessage(record) {
     `${record.labels.group4}：${record.groups.group4.join('、')}`,
     `${record.labels.full}：${record.groups.full.join('、')}`
   ];
-  return lines.join('
-');
+  return lines.join('\n');
+
 }
 
 function buildUpdatedMessage(record) {
