@@ -223,7 +223,7 @@ app.post('/api/manual-tracking', async (req, res) => {
 
 app.post('/api/tracking/cancel', async (req, res) => {
   try {
-    const result = cancelTracking(req.body || {});
+    const result = await cancelTracking(req.body || {});
     res.json(result);
   }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }
