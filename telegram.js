@@ -1,9 +1,20 @@
 const fetch = require('node-fetch');
+const { readBotConfig } = require('./botConfigStore');
 
 function getBotConfig() {
-  const token = String(process.env.BOT_TOKEN || '').trim();
-  const chatId = String(process.env.TG_CHAT_ID || '').trim();
-  return { token, chatId };
+  const envToken = String(process.env.BOT_TOKEN || '').trim();
+  const envChatId = String(process.env.TG_CHAT_ID || '').trim();
+  const fileCfg = readBotConfig();
+  const token = envToken || String(fileCfg.botToken || '').trim();
+  const chatId = envChatId || String(fileCfg.chatId || '').trim();
+  return {
+    token,
+    chatId,
+    source: {
+      token: envToken ? 'env' : (fileCfg.botToken ? 'file' : 'missing'),
+      chatId: envChatId ? 'env' : (fileCfg.chatId ? 'file' : 'missing')
+    }
+  };
 }
 
 function maskMiddle(value, head = 6, tail = 4) {
@@ -14,20 +25,22 @@ function maskMiddle(value, head = 6, tail = 4) {
 }
 
 function getBotRuntimeSummary() {
-  const { token, chatId } = getBotConfig();
+  const { token, chatId, source } = getBotConfig();
   return {
     hasBotToken: Boolean(token),
     hasChatId: Boolean(chatId),
     botTokenLength: token.length,
     chatIdPreview: maskMiddle(chatId, 4, 2),
+    tokenSource: source.token,
+    chatIdSource: source.chatId,
     runtimeSeenAt: new Date().toISOString()
   };
 }
 
 function assertBotConfig() {
   const { token, chatId } = getBotConfig();
-  if (!token) throw new Error('缺少 BOT_TOKEN 環境變數');
-  if (!chatId) throw new Error('缺少 TG_CHAT_ID 環境變數');
+  if (!token) throw new Error('缺少 BOT_TOKEN 環境變數或伺服器已儲存設定');
+  if (!chatId) throw new Error('缺少 TG_CHAT_ID 環境變數或伺服器已儲存設定');
   return { token, chatId };
 }
 

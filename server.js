@@ -11,6 +11,7 @@ const { processTrackingResult, getResultHistory, getLearningState } = require('.
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
 const { getBotRuntimeSummary, testTelegramSend } = require('./telegram');
+const { readBotConfig, writeBotConfig } = require('./botConfigStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -163,7 +164,38 @@ app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.pa
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
 
 app.get('/api/telegram/config', (req, res) => {
-  res.json({ ok: true, telegram: getBotRuntimeSummary() });
+  const saved = readBotConfig();
+  res.json({
+    ok: true,
+    telegram: getBotRuntimeSummary(),
+    saved: {
+      hasSavedBotToken: Boolean(saved.botToken),
+      hasSavedChatId: Boolean(saved.chatId),
+      updatedAt: saved.updatedAt || ''
+    }
+  });
+});
+app.post('/api/telegram/config', (req, res) => {
+  try {
+    const body = req.body || {};
+    const botToken = String(body.botToken || '').trim();
+    const chatId = String(body.chatId || '').trim();
+    if (!botToken) throw new Error('請輸入 BOT_TOKEN');
+    if (!chatId) throw new Error('請輸入 TG_CHAT_ID');
+    const saved = writeBotConfig({ botToken, chatId });
+    res.json({
+      ok: true,
+      message: 'Telegram 設定已儲存到伺服器',
+      telegram: getBotRuntimeSummary(),
+      saved: {
+        hasSavedBotToken: Boolean(saved.botToken),
+        hasSavedChatId: Boolean(saved.chatId),
+        updatedAt: saved.updatedAt
+      }
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message, telegram: getBotRuntimeSummary() });
+  }
 });
 app.post('/api/telegram/test', async (req, res) => {
   try {

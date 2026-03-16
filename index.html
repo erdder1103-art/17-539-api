@@ -1079,6 +1079,19 @@
                   <button class="secondary" id="${id}_btnTelegramTest">測試 TG</button>
                 </div>
                 <div id="${id}_telegramStatus" class="small muted" style="margin-top:8px;line-height:1.7;">Telegram 狀態尚未檢查</div>
+                <div class="row" style="margin-top:8px;">
+                  <div>
+                    <label class="small">BOT_TOKEN（可直接存到伺服器）</label>
+                    <input id="${id}_botTokenInput" placeholder="貼上新的 BOT_TOKEN">
+                  </div>
+                  <div>
+                    <label class="small">TG_CHAT_ID（可直接存到伺服器）</label>
+                    <input id="${id}_chatIdInput" placeholder="例如：-5292559147">
+                  </div>
+                </div>
+                <div class="btns" style="margin-top:8px;">
+                  <button class="secondary" id="${id}_btnSaveTelegramConfig">儲存 TG 設定到伺服器</button>
+                </div>
                 <div id="${id}_trackingBoard" class="small" style="margin-top:10px;line-height:1.8;">尚未載入追蹤清單</div>
               </div>
           </div>
@@ -2339,9 +2352,29 @@
     try{
       const data = await fetchJson(`${API_BASE}/api/telegram/config`);
       const tg = data.telegram || {};
-      box.innerHTML = `TG 設定：BOT_TOKEN=${tg.hasBotToken ? '已讀到' : '未讀到'}，TG_CHAT_ID=${tg.hasChatId ? '已讀到' : '未讀到'}${tg.chatIdPreview ? `，Chat預覽=${escapeHtml(tg.chatIdPreview)}` : ''}`;
+      box.innerHTML = `TG 設定：BOT_TOKEN=${tg.hasBotToken ? '已讀到' : '未讀到'}（${escapeHtml(tg.tokenSource || 'unknown')}），TG_CHAT_ID=${tg.hasChatId ? '已讀到' : '未讀到'}（${escapeHtml(tg.chatIdSource || 'unknown')}）${tg.chatIdPreview ? `，Chat預覽=${escapeHtml(tg.chatIdPreview)}` : ''}`;
     }catch(err){
       box.innerHTML = `TG 設定檢查失敗：${escapeHtml(err.message || '未知錯誤')}`;
+    }
+  }
+
+
+  async function saveTelegramConfig(id){
+    const token = ($(`${id}_botTokenInput`)?.value || '').trim();
+    const chatId = ($(`${id}_chatIdInput`)?.value || '').trim();
+    const title = state.lotteries[id].cfg.title;
+    try{
+      const res = await fetch(`${API_BASE}/api/telegram/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ botToken: token, chatId })
+      });
+      const result = await res.json().catch(()=>null);
+      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      showMiniNotice(`${title}：Telegram 設定已儲存`, 'ok');
+      await refreshTelegramStatus(id);
+    }catch(err){
+      showMiniNotice(`${title}：Telegram 設定儲存失敗：${err.message || '未知錯誤'}`, 'warn');
     }
   }
 
