@@ -32,11 +32,15 @@ function hitCount(group, draw) {
 }
 
 function evaluateResult(resultMap) {
-  const mainHits = [resultMap.group1, resultMap.group2, resultMap.group3, resultMap.group4].filter(v => typeof v === 'number' && v > 0);
-  if (mainHits.some(v => v >= 4)) return { label: '發財了各位', code: 'jackpot' };
-  const hit2or3Count = mainHits.filter(v => v === 2 || v === 3).length;
-  if (hit2or3Count >= 2) return { label: '靠3.3倍', code: 'x33' };
-  if (hit2or3Count === 1) return { label: '再接再厲', code: 'retry' };
+  const groups = [
+    resultMap.group1 || 0,
+    resultMap.group2 || 0,
+    resultMap.group3 || 0,
+    resultMap.group4 || 0
+  ];
+  const hit23 = groups.filter(v => v === 2 || v === 3).length;
+  if (hit23 >= 2) return { label: '靠3.3倍', code: 'x33' };
+  if (hit23 === 1) return { label: '再接再厲', code: 'retry' };
   return { label: '恭喜過關', code: 'pass' };
 }
 
@@ -52,6 +56,15 @@ function buildResultMap(groups) {
     group4: hitCount(groups.group4 || [], groups.__draw || []),
     full: hitCount(groups.full || [], groups.__draw || [])
   };
+}
+
+function hitNumbers(group, draw) {
+  const set = new Set(draw);
+  return (group || []).filter(n => set.has(n));
+}
+
+function parseIssue(issueKey) {
+  return String(issueKey || '').split('|')[0] || '';
 }
 
 function learnFromOutcome(lotteryType, tracking, draw, resultMap, evaluation) {
@@ -81,30 +94,35 @@ function learnFromOutcome(lotteryType, tracking, draw, resultMap, evaluation) {
   writeJson(LEARNING_FILE, store);
 }
 
-function buildResultMessage(lotteryTitle, draw, tracking, resultMap, finalLabel, weeklyText) {
-  const lines = [
-    `【拾柒追蹤系統｜${lotteryTitle} 開獎核對】`,
-    '',
-    `核對狀態：已完成`,
-    `核對時間：${nowFull()}`,
-    `追蹤類型：${tracking.trackType === 'manual' ? `手動追蹤${tracking.sourceName ? `（${tracking.sourceName}）` : ''}` : '系統追蹤'}`,
-    '',
-    `本期開獎號碼：`,
-    draw.join('、'),
-    ''
-  ];
+function buildResultLine(label, nums, hits, draw) {
+  const hitNums = hitNumbers(nums, draw);
+  return `${label}：${(nums || []).join('、')}　命中：${hits}顆　號碼：${hitNums.length ? hitNums.join('、') : '無'}`;
+}
 
-  lines.push('各組命中結果：');
-  lines.push(`${tracking.labels?.group1 || '第一組'}：中 ${resultMap.group1} 顆`);
-  lines.push(`${tracking.labels?.group2 || '第二組'}：中 ${resultMap.group2} 顆`);
-  lines.push(`${tracking.labels?.group3 || '第三組'}：中 ${resultMap.group3} 顆`);
-  lines.push(`${tracking.labels?.group4 || '第四組'}：中 ${resultMap.group4} 顆`);
-  lines.push(`${tracking.labels?.full || '全車號碼'}：中 ${resultMap.full} 顆`);
-  lines.push('');
-  lines.push('本期結果：');
-  lines.push(finalLabel);
-  lines.push('');
-  lines.push(weeklyText);
+function buildResultMessage(lotteryTitle, issueKey, draw, tracking, resultMap, finalLabel) {
+  const labels = tracking.labels || {
+    group1: '第一組',
+    group2: '第二組',
+    group3: '第三組',
+    group4: '第四組',
+    full: '全車號碼'
+  };
+  const fullHitNums = hitNumbers(tracking.groups.full || [], draw);
+  const lines = [
+    `【拾柒追蹤系統｜${lotteryTitle} 開獎結果】`,
+    '',
+    `追蹤來源：${tracking.sourceName || (tracking.trackType === 'manual' ? '未命名通報' : '防2/3碰撞追蹤')}`,
+    `開獎期數：${parseIssue(issueKey)}`,
+    `開獎號碼：${draw.join('、')}`,
+    buildResultLine(labels.group1 || '第一組', tracking.groups.group1 || [], resultMap.group1, draw),
+    buildResultLine(labels.group2 || '第二組', tracking.groups.group2 || [], resultMap.group2, draw),
+    buildResultLine(labels.group3 || '第三組', tracking.groups.group3 || [], resultMap.group3, draw),
+    buildResultLine(labels.group4 || '第四組', tracking.groups.group4 || [], resultMap.group4, draw),
+    `${labels.full || '全車號碼'}：${(tracking.groups.full || []).join('、')}`,
+    `全車命中：${resultMap.full}顆　號碼：${fullHitNums.length ? fullHitNums.join('、') : '無'}`,
+    '',
+    `結果：${finalLabel}`
+  ];
   return lines.join('\n');
 }
 
@@ -130,9 +148,10 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
     const groups = { ...(tracking.groups || {}), __draw: draw };
     const resultMap = buildResultMap(groups);
     const evaluation = evaluateResult(resultMap);
-    const weekly = tracking.trackType === 'system' ? updateWeeklyStats(key, evaluation.label) : null;
-    const weeklyText = tracking.trackType === 'system' ? buildWeeklySummaryText(key, weekly) : '手動追蹤已完成核對';
-    const message = buildResultMessage(lotteryTitle, draw, tracking, resultMap, evaluation.label, weeklyText);
+    if (tracking.trackType === 'system') {
+      updateWeeklyStats(key, evaluation.label);
+    }
+    const message = buildResultMessage(lotteryTitle, issueKey, draw, tracking, resultMap, evaluation.label);
 
     await sendTelegramMessage(message, { timeoutMs: 8000 });
     learnFromOutcome(key, tracking, draw, resultMap, evaluation);
@@ -156,7 +175,8 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
       draw,
       resultMap,
       finalLabel: evaluation.label,
-      checkedAt: nowFull()
+      checkedAt: nowFull(),
+      weeklyText: tracking.trackType === 'system' ? buildWeeklySummaryText(key) : ''
     });
 
     outcomes.push({ trackingId: tracking.id, finalLabel: evaluation.label, resultMap, trackType: tracking.trackType || 'system' });
@@ -164,7 +184,7 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
 
   writeJson(RESULT_HISTORY_FILE, history);
   state[key].processedIssues.push(issueKey);
-  state[key].processedIssues = state[key].processedIssues.slice(-30);
+  state[key].processedIssues = state[key].processedIssues.slice(-60);
   state[key].lastIssue = issueKey;
   state[key].lastCheckedAt = nowFull();
   writeJson(RESULT_STATE_FILE, state);

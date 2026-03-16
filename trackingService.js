@@ -1,9 +1,7 @@
 const { sendTelegramMessage } = require('./telegram');
 const {
-  getActiveTracking,
   getActiveTrackings,
   getTrackingHistory,
-  cancelActiveTracking,
   cancelTrackingById,
   setActiveTracking,
   normalizeLotteryType
@@ -52,6 +50,10 @@ function ensureMainGroupsUnique(parsed, labelPrefix = '') {
   }
 }
 
+function defaultSystemSource(payload) {
+  return String(payload.sourceName || payload.source || '').trim() || '防2/3碰撞追蹤';
+}
+
 function validatePayload(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
   const groups = normalizeGroups(payload.groups || {});
@@ -63,6 +65,7 @@ function validatePayload(payload) {
     lotteryTitle: title,
     confirmedAt: formatTaipeiDateTime(),
     trackType: 'system',
+    sourceName: defaultSystemSource(payload),
     labels: payload.labels || {
       group1: '第一組',
       group2: '第二組',
@@ -114,66 +117,57 @@ function buildTrackingRecord(input) {
   };
 }
 
-function buildCreatedMessage(record) {
-  const lines = [
-    `【拾柒追蹤系統｜${record.lotteryTitle} ${record.trackType === 'manual' ? '手動追蹤' : '確定通報'}】`,
-    '',
-    `${record.trackType === 'manual' ? '追蹤狀態' : '通報狀態'}：已建立`,
-    ...(record.trackType === 'manual' ? [`通報來源：${record.sourceName || '未命名通報'}`] : []),
-    `通報時間：${record.confirmedAt}`,
-    '',
+function linesForGroups(record) {
+  return [
     `${record.labels.group1}：${record.groups.group1.join('、')}`,
     `${record.labels.group2}：${record.groups.group2.join('、')}`,
     `${record.labels.group3}：${record.groups.group3.join('、')}`,
     `${record.labels.group4}：${record.groups.group4.join('、')}`,
     `${record.labels.full}：${record.groups.full.join('、')}`
   ];
+}
 
-  if (record.trackType !== 'manual') {
-    lines.push('');
-    lines.push('說明：若同彩種於開獎前重新通報，系統將自動取消前一次系統追蹤，並以最新通報為準。手動追蹤則保留獨立追蹤。');
-  }
-
+function buildCreatedMessage(record) {
+  const title = record.trackType === 'manual' ? '手動追蹤' : '確定通報';
+  const lines = [
+    `【拾柒追蹤系統｜${record.lotteryTitle} ${title}】`,
+    '',
+    `${record.trackType === 'manual' ? '追蹤狀態' : '通報狀態'}：已建立`,
+    ...(record.trackType === 'manual' ? [] : ['追蹤類型：系統生成']),
+    `通報來源：${record.sourceName || '未命名通報'}`,
+    `通報時間：${record.confirmedAt}`,
+    '',
+    ...linesForGroups(record)
+  ];
   return lines.join('\n');
 }
 
-
 function buildCancelledMessage(record) {
-  const statusLabel = record.trackType === 'manual' ? '手動追蹤取消' : '系統追蹤取消';
   const lines = [
-    `【拾柒追蹤系統｜${record.lotteryTitle} ${statusLabel}】`,
+    `【拾柒追蹤系統｜${record.lotteryTitle} 取消通報】`,
     '',
     '追蹤狀態：已取消',
-    ...(record.trackType === 'manual' ? [`通報來源：${record.sourceName || '未命名通報'}`] : []),
+    `追蹤類型：${record.trackType === 'manual' ? '手動追蹤' : '系統生成'}`,
+    `通報來源：${record.sourceName || '未命名通報'}`,
     `取消時間：${record.cancelledAt || formatTaipeiDateTime()}`,
-    ...(record.cancelReason ? [`取消原因：${record.cancelReason}`] : []),
     '',
-    `${record.labels.group1}：${record.groups.group1.join('、')}`,
-    `${record.labels.group2}：${record.groups.group2.join('、')}`,
-    `${record.labels.group3}：${record.groups.group3.join('、')}`,
-    `${record.labels.group4}：${record.groups.group4.join('、')}`,
-    `${record.labels.full}：${record.groups.full.join('、')}`
+    ...linesForGroups(record)
   ];
   return lines.join('\n');
-
 }
 
 function buildUpdatedMessage(record) {
-  return [
-    `【拾柒追蹤系統｜${record.lotteryTitle} 通報更新】`,
+  const lines = [
+    `【拾柒追蹤系統｜${record.lotteryTitle} 更新通報】`,
     '',
     '追蹤狀態：已更新',
+    `追蹤類型：${record.trackType === 'manual' ? '手動追蹤' : '系統生成'}`,
+    `通報來源：${record.sourceName || '未命名通報'}`,
     `更新時間：${record.confirmedAt}`,
     '',
-    `系統已取消上一筆尚未開獎的 ${record.lotteryTitle} 系統追蹤，`,
-    '目前改為追蹤以下最新分組：',
-    '',
-    `${record.labels.group1}：${record.groups.group1.join('、')}`,
-    `${record.labels.group2}：${record.groups.group2.join('、')}`,
-    `${record.labels.group3}：${record.groups.group3.join('、')}`,
-    `${record.labels.group4}：${record.groups.group4.join('、')}`,
-    `${record.labels.full}：${record.groups.full.join('、')}`
-  ].join('\n');
+    ...linesForGroups(record)
+  ];
+  return lines.join('\n');
 }
 
 function groupsFingerprint(record) {
@@ -207,26 +201,23 @@ async function confirmTracking(payload) {
 
   inflightByKey.set(lockKey, true);
   try {
-    const current = getActiveTracking(type);
-    const replacedOldTracking = Boolean(current && current.status === 'pending');
+    const current = getActiveTrackings(type).find((row) => row.trackType === 'system' && row.status === 'pending');
+    const replacedOldTracking = Boolean(current);
     const record = buildTrackingRecord(parsed);
     const messageText = replacedOldTracking ? buildUpdatedMessage(record) : buildCreatedMessage(record);
 
     await sendTelegramMessage(messageText, { timeoutMs: 8000 });
-
-    if (replacedOldTracking) {
-      cancelActiveTracking(type, 'replaced-before-draw');
-    }
-    setActiveTracking(type, record);
+    const saveResult = setActiveTracking(type, record);
 
     return {
       ok: true,
       busy: false,
       replacedOldTracking,
+      replacedCount: saveResult.replaced ? 1 : 0,
       telegramSent: true,
       tracking: record,
       message: replacedOldTracking
-        ? `${parsed.lotteryTitle} 已取消上一期未開獎系統通報，並更新為最新追蹤`
+        ? `${parsed.lotteryTitle} 已更新系統追蹤，舊追蹤已自動失效`
         : `${parsed.lotteryTitle} 已建立追蹤並送出通報`
     };
   } catch (err) {
@@ -238,7 +229,7 @@ async function confirmTracking(payload) {
 
 async function confirmManualTracking(payload) {
   const parsed = validateManualPayload(payload);
-  const lockKey = `manual:${parsed.lotteryType}`;
+  const lockKey = `manual:${parsed.lotteryType}:${parsed.sourceName}`;
 
   if (inflightByKey.get(lockKey)) {
     return {
@@ -260,16 +251,22 @@ async function confirmManualTracking(payload) {
 
   inflightByKey.set(lockKey, true);
   try {
+    const existing = getActiveTrackings(parsed.lotteryType).find((row) => row.trackType === 'manual' && row.status === 'pending' && String(row.sourceName || '') === parsed.sourceName);
     const record = buildTrackingRecord(parsed);
-    await sendTelegramMessage(buildCreatedMessage(record), { timeoutMs: 8000 });
-    setActiveTracking(parsed.lotteryType, record);
+    const messageText = existing ? buildUpdatedMessage(record) : buildCreatedMessage(record);
+    await sendTelegramMessage(messageText, { timeoutMs: 8000 });
+    const saveResult = setActiveTracking(parsed.lotteryType, record);
     return {
       ok: true,
       busy: false,
       duplicate: false,
       telegramSent: true,
+      replacedOldTracking: Boolean(existing),
+      replacedCount: Array.isArray(saveResult.replaced) ? saveResult.replaced.length : 0,
       tracking: record,
-      message: `${parsed.lotteryTitle} 已新增手動追蹤：${record.sourceName}`
+      message: existing
+        ? `${parsed.lotteryTitle} 已更新手動追蹤：${record.sourceName}`
+        : `${parsed.lotteryTitle} 已新增手動追蹤：${record.sourceName}`
     };
   } catch (err) {
     throw new Error(`Telegram 發送失敗：${err.message}`);
@@ -277,7 +274,6 @@ async function confirmManualTracking(payload) {
     inflightByKey.delete(lockKey);
   }
 }
-
 
 async function cancelTracking(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
@@ -299,10 +295,12 @@ async function cancelTracking(payload) {
 }
 
 function getTrackingOverview(lotteryType) {
+  const active = getActiveTrackings(lotteryType);
   return {
     ok: true,
-    active: getActiveTrackings(lotteryType),
-    history: getTrackingHistory(lotteryType, 50)
+    active,
+    history: getTrackingHistory(lotteryType, 50),
+    message: active.length ? `目前共有 ${active.length} 筆待開獎追蹤` : '目前沒有待開獎追蹤'
   };
 }
 

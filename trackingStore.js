@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { formatTaipeiDateTime } = require('./utils/time');
+const { formatTaipeiDateTime, formatTaipeiCompact } = require('./utils/time');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const TRACKING_FILE = path.join(DATA_DIR, 'tracking.json');
@@ -75,15 +75,34 @@ function getTypeState(lotteryType) {
   return map[normalizeLotteryType(lotteryType)] || defaultTypeState();
 }
 
+function getTodayKey() {
+  return formatTaipeiCompact().slice(0, 8);
+}
+
+function extractDateKey(value) {
+  const str = String(value || '');
+  return str.replace(/[^0-9]/g, '').slice(0, 8);
+}
+
+function isRecordActive(row) {
+  if (!row || row.status !== 'pending') return false;
+  const dateKey = extractDateKey(row.createdAt || row.confirmedAt);
+  return !dateKey || dateKey === getTodayKey();
+}
+
 function getActiveTracking(lotteryType) {
-  return getTypeState(lotteryType).system || null;
+  const state = getTypeState(lotteryType);
+  return isRecordActive(state.system) ? state.system : null;
 }
 
 function getActiveTrackings(lotteryType) {
   const state = getTypeState(lotteryType);
   const list = [];
-  if (state.system) list.push(state.system);
-  return list.concat(Array.isArray(state.manuals) ? state.manuals : []);
+  if (isRecordActive(state.system)) list.push(state.system);
+  for (const row of Array.isArray(state.manuals) ? state.manuals : []) {
+    if (isRecordActive(row)) list.push(row);
+  }
+  return list;
 }
 
 function cancelTrackingById(lotteryType, trackingId, reason = 'replaced') {
@@ -119,21 +138,66 @@ function cancelActiveTracking(lotteryType, reason = 'replaced') {
   return cancelTrackingById(lotteryType, current.id, reason);
 }
 
-function setActiveTracking(lotteryType, tracking) {
+function replaceSystemTracking(lotteryType, tracking, reason = 'replaced-before-draw') {
   const key = normalizeLotteryType(lotteryType);
   const map = getTrackingMap();
   const state = map[key] || defaultTypeState();
-  const type = tracking.trackType || 'system';
-  if (type === 'manual') {
-    state.manuals = Array.isArray(state.manuals) ? state.manuals : [];
-    state.manuals.push(tracking);
-  } else {
-    state.system = tracking;
+  let replaced = null;
+
+  if (state.system && isRecordActive(state.system)) {
+    replaced = {
+      ...state.system,
+      status: 'cancelled',
+      cancelReason: reason,
+      cancelledAt: formatTaipeiDateTime()
+    };
+    appendHistory(replaced);
   }
+
+  state.system = tracking;
   map[key] = state;
   saveTrackingMap(map);
-  appendHistory({ ...tracking, event: 'created' });
-  return tracking;
+  appendHistory({ ...tracking, event: replaced ? 'updated' : 'created' });
+  return { tracking, replaced };
+}
+
+function replaceManualTracking(lotteryType, tracking, reason = 'replaced-by-new-manual') {
+  const key = normalizeLotteryType(lotteryType);
+  const map = getTrackingMap();
+  const state = map[key] || defaultTypeState();
+  const manuals = Array.isArray(state.manuals) ? state.manuals : [];
+  const replaced = [];
+  const kept = [];
+
+  for (const row of manuals) {
+    if (isRecordActive(row) && String(row.sourceName || '') === String(tracking.sourceName || '')) {
+      const cancelled = {
+        ...row,
+        status: 'cancelled',
+        cancelReason: reason,
+        cancelledAt: formatTaipeiDateTime()
+      };
+      replaced.push(cancelled);
+      appendHistory(cancelled);
+    } else {
+      kept.push(row);
+    }
+  }
+
+  kept.push(tracking);
+  state.manuals = kept;
+  map[key] = state;
+  saveTrackingMap(map);
+  appendHistory({ ...tracking, event: replaced.length ? 'updated' : 'created' });
+  return { tracking, replaced };
+}
+
+function setActiveTracking(lotteryType, tracking) {
+  const type = tracking.trackType || 'system';
+  if (type === 'manual') {
+    return replaceManualTracking(lotteryType, tracking);
+  }
+  return replaceSystemTracking(lotteryType, tracking);
 }
 
 function settleTracking(lotteryType, trackingId, settlement) {
@@ -153,8 +217,8 @@ function settleTracking(lotteryType, trackingId, settlement) {
 
   const settled = {
     ...current,
-    status: 'settled',
-    settledAt: formatTaipeiDateTime(),
+    status: 'completed',
+    completedAt: formatTaipeiDateTime(),
     settlement: settlement || null
   };
   appendHistory(settled);
@@ -175,6 +239,8 @@ module.exports = {
   getTrackingHistory,
   cancelActiveTracking,
   cancelTrackingById,
+  replaceSystemTracking,
+  replaceManualTracking,
   setActiveTracking,
   settleTracking,
   normalizeLotteryType
