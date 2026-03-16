@@ -10,7 +10,6 @@ const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
-const { generateLogsWorkbook } = require('./exportService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -105,7 +104,6 @@ async function handleAutoCheck(type, title, list) {
   try {
     const issueKey = `${latest.issue}|${latest.date}|${latest.numbers.join('-')}`;
     await processTrackingResult(type, title, latest.numbers, issueKey);
-    generateLogsWorkbook();
     console.log(`${title} 自動核對完成：${issueKey}`);
   } catch (err) {
     console.error(`${title} 自動核對失敗：`, err.message);
@@ -147,7 +145,6 @@ async function updateAll() {
   try {
     await Promise.all([update539(), updateTTL()]);
     lastUpdate = formatTaipeiDateTime();
-    generateLogsWorkbook();
   } finally {
     isUpdating = false;
   }
@@ -163,19 +160,9 @@ app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHi
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
-app.get('/api/logs.xlsx', (req, res) => {
-  try {
-    const filePath = generateLogsWorkbook();
-    res.download(filePath, 'logs.xlsx');
-  } catch (err) {
-    res.status(500).json({ ok: false, message: err.message });
-  }
-});
-
 app.post('/api/confirm-tracking', async (req, res) => {
   try {
     const result = await confirmTracking(req.body || {});
-    generateLogsWorkbook();
     res.json(result);
   }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }
@@ -183,7 +170,6 @@ app.post('/api/confirm-tracking', async (req, res) => {
 app.post('/api/manual-tracking', async (req, res) => {
   try {
     const result = await confirmManualTracking(req.body || {});
-    generateLogsWorkbook();
     res.json(result);
   }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }
