@@ -1076,7 +1076,9 @@
                 <div class="btns" style="margin-top:10px;">
                   <button class="secondary" id="${id}_btnManualTracking">新增手動追蹤</button>
                   <button class="secondary" id="${id}_btnRefreshTracking">刷新追蹤清單</button>
+                  <button class="secondary" id="${id}_btnTelegramTest">測試 TG</button>
                 </div>
+                <div id="${id}_telegramStatus" class="small muted" style="margin-top:8px;line-height:1.7;">Telegram 狀態尚未檢查</div>
                 <div id="${id}_trackingBoard" class="small" style="margin-top:10px;line-height:1.8;">尚未載入追蹤清單</div>
               </div>
           </div>
@@ -2331,9 +2333,57 @@
       .map(v => String(v).padStart(2, "0"));
   }
 
+  async function refreshTelegramStatus(id){
+    const box = $(`${id}_telegramStatus`);
+    if(!box) return;
+    try{
+      const data = await fetchJson(`${API_BASE}/api/telegram/config`);
+      const tg = data.telegram || {};
+      box.innerHTML = `TG 設定：BOT_TOKEN=${tg.hasBotToken ? '已讀到' : '未讀到'}，TG_CHAT_ID=${tg.hasChatId ? '已讀到' : '未讀到'}${tg.chatIdPreview ? `，Chat預覽=${escapeHtml(tg.chatIdPreview)}` : ''}`;
+    }catch(err){
+      box.innerHTML = `TG 設定檢查失敗：${escapeHtml(err.message || '未知錯誤')}`;
+    }
+  }
+
+  async function testTelegram(id){
+    const title = state.lotteries[id].cfg.title;
+    try{
+      const res = await fetch(`${API_BASE}/api/telegram/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `【${title}】Telegram 測試成功` })
+      });
+      const result = await res.json().catch(()=>null);
+      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      showMiniNotice(`${title}：Telegram 測試成功`, 'ok');
+    }catch(err){
+      showMiniNotice(`${title}：Telegram 測試失敗：${err.message || '未知錯誤'}`, 'warn');
+    }finally{
+      await refreshTelegramStatus(id);
+    }
+  }
+
+  async function cancelTrackingItem(id, trackingId){
+    const title = state.lotteries[id].cfg.title;
+    try{
+      const res = await fetch(`${API_BASE}/api/tracking/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lotteryType: id === 'ttl' ? 'ttl' : '539', trackingId, reason: 'manual-ui-cancel' })
+      });
+      const result = await res.json().catch(()=>null);
+      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      showMiniNotice(`${title}：${result.message || '已取消追蹤'}`, 'ok');
+      await refreshTrackingBoard(id);
+    }catch(err){
+      showMiniNotice(`${title}：取消追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
+    }
+  }
+
   async function refreshTrackingBoard(id){
     const box = $(`${id}_trackingBoard`);
     if(!box) return;
+    await refreshTelegramStatus(id);
     try{
       const type = id === "ttl" ? "ttl" : "539";
       const data = await fetchJson(`${API_BASE}/api/tracking/${type}`);
@@ -2352,8 +2402,11 @@
           .concat([row.groups?.full?.length ? `全車 ${row.groups.full.join('、')}` : ''])
           .filter(Boolean)
           .join('<br>');
-        return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div></div>`;
+        return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div><div class="btns" style="margin-top:8px;"><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
       }).join('');
+      Array.from(box.querySelectorAll('.btnCancelTracking')).forEach((btn)=>{
+        btn.addEventListener('click', ()=>cancelTrackingItem(id, btn.dataset.id || ''));
+      });
     }catch(err){
       box.innerHTML = `<span class="muted">追蹤清單載入失敗：${escapeHtml(err.message || '未知錯誤')}</span>`;
     }
@@ -2446,6 +2499,7 @@ function bindEvents(id){
     $(`${id}_btnConfirmTracking`).addEventListener("click", ()=>confirmTracking(id));
     $(`${id}_btnManualTracking`).addEventListener("click", ()=>submitManualTracking(id));
     $(`${id}_btnRefreshTracking`).addEventListener("click", ()=>refreshTrackingBoard(id));
+    $(`${id}_btnTelegramTest`).addEventListener("click", ()=>testTelegram(id));
 
     $(`${id}_btnGenerateSmart`).addEventListener("click", ()=>{
       const text = getEls(id).historyInput.value.trim();

@@ -5,11 +5,12 @@ const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
-const { confirmTracking, confirmManualTracking, getTrackingOverview } = require('./trackingService');
+const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview } = require('./trackingService');
 const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
+const { getBotRuntimeSummary, testTelegramSend } = require('./telegram');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -153,13 +154,26 @@ async function updateAll() {
 app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, timezone: 'Asia/Taipei', count: cache539.length, draws: cache539 }));
 app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, timezone: 'Asia/Taipei', count: cacheTTL.length, draws: cacheTTL }));
 app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, timezone: 'Asia/Taipei', lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
-app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate, timezone: 'Asia/Taipei', isUpdating }));
+app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate, timezone: 'Asia/Taipei', isUpdating, telegram: getBotRuntimeSummary() }));
 app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
 app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
+
+app.get('/api/telegram/config', (req, res) => {
+  res.json({ ok: true, telegram: getBotRuntimeSummary() });
+});
+app.post('/api/telegram/test', async (req, res) => {
+  try {
+    const text = String((req.body && req.body.text) || '【拾柒追蹤系統】Telegram 測試成功').trim();
+    const result = await testTelegramSend(text);
+    res.json({ ok: true, result, telegram: getBotRuntimeSummary() });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message, telegram: getBotRuntimeSummary() });
+  }
+});
 app.post('/api/confirm-tracking', async (req, res) => {
   try {
     const result = await confirmTracking(req.body || {});
@@ -170,6 +184,14 @@ app.post('/api/confirm-tracking', async (req, res) => {
 app.post('/api/manual-tracking', async (req, res) => {
   try {
     const result = await confirmManualTracking(req.body || {});
+    res.json(result);
+  }
+  catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+app.post('/api/tracking/cancel', (req, res) => {
+  try {
+    const result = cancelTracking(req.body || {});
     res.json(result);
   }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }

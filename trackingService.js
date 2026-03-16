@@ -4,6 +4,7 @@ const {
   getActiveTrackings,
   getTrackingHistory,
   cancelActiveTracking,
+  cancelTrackingById,
   setActiveTracking,
   normalizeLotteryType
 } = require('./trackingStore');
@@ -256,6 +257,21 @@ async function confirmManualTracking(payload) {
   }
 }
 
+
+function cancelTracking(payload) {
+  const lotteryType = normalizeLotteryType(payload.lotteryType);
+  const trackingId = String(payload.trackingId || '').trim();
+  const reason = String(payload.reason || 'manual-cancel').trim() || 'manual-cancel';
+  if (!trackingId) throw new Error('缺少 trackingId');
+  const cancelled = cancelTrackingById(lotteryType, trackingId, reason);
+  if (!cancelled) throw new Error('找不到可取消的追蹤');
+  return {
+    ok: true,
+    cancelled,
+    message: `${cancelled.lotteryTitle} 已取消${cancelled.trackType === 'manual' ? '手動' : '系統'}追蹤`
+  };
+}
+
 function getTrackingOverview(lotteryType) {
   return {
     ok: true,
@@ -264,4 +280,4 @@ function getTrackingOverview(lotteryType) {
   };
 }
 
-module.exports = { confirmTracking, confirmManualTracking, getTrackingOverview };
+module.exports = { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview };

@@ -6,6 +6,24 @@ function getBotConfig() {
   return { token, chatId };
 }
 
+function maskMiddle(value, head = 6, tail = 4) {
+  const s = String(value || '');
+  if (!s) return '';
+  if (s.length <= head + tail) return `${s.slice(0, Math.max(1, head))}***`;
+  return `${s.slice(0, head)}***${s.slice(-tail)}`;
+}
+
+function getBotRuntimeSummary() {
+  const { token, chatId } = getBotConfig();
+  return {
+    hasBotToken: Boolean(token),
+    hasChatId: Boolean(chatId),
+    botTokenLength: token.length,
+    chatIdPreview: maskMiddle(chatId, 4, 2),
+    runtimeSeenAt: new Date().toISOString()
+  };
+}
+
 function assertBotConfig() {
   const { token, chatId } = getBotConfig();
   if (!token) throw new Error('缺少 BOT_TOKEN 環境變數');
@@ -13,25 +31,20 @@ function assertBotConfig() {
   return { token, chatId };
 }
 
-async function sendTelegramMessage(text, options = {}) {
-  const { token, chatId } = assertBotConfig();
+async function callTelegram(method, payload = {}, options = {}) {
+  const { token } = assertBotConfig();
   const timeoutMs = Number(options.timeoutMs || process.env.TG_TIMEOUT_MS || 8000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const url = `https://api.telegram.org/bot${token}/${method}`;
 
-  const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true
-      }),
+      body: JSON.stringify(payload),
       signal: controller.signal
     });
-
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
       throw new Error(data.description || `Telegram HTTP ${res.status}`);
@@ -47,4 +60,28 @@ async function sendTelegramMessage(text, options = {}) {
   }
 }
 
-module.exports = { sendTelegramMessage, getBotConfig, assertBotConfig };
+async function sendTelegramMessage(text, options = {}) {
+  const { chatId } = assertBotConfig();
+  return callTelegram('sendMessage', {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true
+  }, options);
+}
+
+async function testTelegramSend(text = 'Telegram 測試成功') {
+  const result = await sendTelegramMessage(text, { timeoutMs: 8000 });
+  return {
+    ok: true,
+    chatId: result.result && result.result.chat ? result.result.chat.id : null,
+    messageId: result.result ? result.result.message_id : null
+  };
+}
+
+module.exports = {
+  sendTelegramMessage,
+  getBotConfig,
+  getBotRuntimeSummary,
+  assertBotConfig,
+  testTelegramSend
+};
