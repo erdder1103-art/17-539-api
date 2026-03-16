@@ -2322,7 +2322,7 @@
         showMiniNotice(`${s.cfg.title}：${result.message || "通報處理中，請勿重複點擊"}`, "warn");
       }else{
         showMiniNotice(`${s.cfg.title}：${result.message || "通報已送出"}`, "ok");
-        refreshTrackingBoard(id);
+        refreshTrackingBoard(id, { silent: true });
       }
     }catch(err){
       const msg = err?.name === "AbortError" ? "通報逾時，請稍後再試" : err.message;
@@ -2407,15 +2407,16 @@
       const result = await res.json().catch(()=>null);
       if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
       showMiniNotice(`${title}：${result.message || '已取消追蹤'}`, 'ok');
-      await refreshTrackingBoard(id);
+      await refreshTrackingBoard(id, { silent: true });
     }catch(err){
       showMiniNotice(`${title}：取消追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }
   }
 
-  async function refreshTrackingBoard(id){
+  async function refreshTrackingBoard(id, options = {}){
     const box = $(`${id}_trackingBoard`);
     if(!box) return;
+    const { silent = false } = options || {};
     await refreshTelegramStatus(id);
     try{
       const type = id === "ttl" ? "ttl" : "539";
@@ -2423,6 +2424,9 @@
       const active = Array.isArray(data.active) ? data.active : [];
       if(!active.length){
         box.innerHTML = '<span class="muted">目前沒有待開獎追蹤</span>';
+        if(!silent){
+          showMiniNotice(`${state.lotteries[id].cfg.title}：追蹤清單已刷新，目前沒有待開獎追蹤`, 'info');
+        }
         return;
       }
       box.innerHTML = active.map((row)=>{
@@ -2440,6 +2444,9 @@
       Array.from(box.querySelectorAll('.btnCancelTracking')).forEach((btn)=>{
         btn.addEventListener('click', ()=>cancelTrackingItem(id, btn.dataset.id || ''));
       });
+      if(!silent){
+        showMiniNotice(`${state.lotteries[id].cfg.title}：追蹤清單已刷新，目前共有 ${active.length} 筆待開獎追蹤`, 'info');
+      }
     }catch(err){
       box.innerHTML = `<span class="muted">追蹤清單載入失敗：${escapeHtml(err.message || '未知錯誤')}</span>`;
     }
@@ -2489,7 +2496,7 @@
       ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
         if($(`${id}_${key}`)) $(`${id}_${key}`).value = '';
       });
-      await refreshTrackingBoard(id);
+      await refreshTrackingBoard(id, { silent: true });
     }catch(err){
       showMiniNotice(`${s.cfg.title}：手動追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }

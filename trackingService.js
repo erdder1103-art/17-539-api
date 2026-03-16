@@ -258,17 +258,22 @@ async function confirmManualTracking(payload) {
 }
 
 
-function cancelTracking(payload) {
+async function cancelTracking(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
   const trackingId = String(payload.trackingId || '').trim();
   const reason = String(payload.reason || 'manual-cancel').trim() || 'manual-cancel';
   if (!trackingId) throw new Error('缺少 trackingId');
   const cancelled = cancelTrackingById(lotteryType, trackingId, reason);
   if (!cancelled) throw new Error('找不到可取消的追蹤');
+  try {
+    await sendTelegramMessage(buildCancelledMessage(cancelled), { timeoutMs: 8000 });
+  } catch (err) {
+    throw new Error(`取消追蹤已完成，但 Telegram 取消通報失敗：${err.message}`);
+  }
   return {
     ok: true,
     cancelled,
-    message: `${cancelled.lotteryTitle} 已取消${cancelled.trackType === 'manual' ? '手動' : '系統'}追蹤`
+    message: `${cancelled.lotteryTitle} 已取消${cancelled.trackType === 'manual' ? '手動' : '系統'}追蹤並送出取消通報`
   };
 }
 
