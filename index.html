@@ -927,7 +927,7 @@
   $("summaryOverlay").addEventListener("click", (e)=>{ if(e.target.id === "summaryOverlay") hideSummary(); });
 
 
-  const searchAnimState = { visible:false, running:false, locked:false, lastStep:0, lastSpin:0, timers:[] };
+  const searchAnimState = { visible:false, running:false, locked:false, lastStep:0, lastSpin:0, timers:[], worker:null, currentLotteryId:null, cancelRequested:false };
 
   function getSearchEls(){
     return {
@@ -958,6 +958,151 @@
     wrap.id = `searchCard_${idx}`;
     wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div>`;
     return wrap;
+  }
+
+
+  function terminateSearchWorker(){
+    if (searchAnimState.worker) {
+      try { searchAnimState.worker.terminate(); } catch (_) {}
+    }
+    searchAnimState.worker = null;
+    searchAnimState.running = false;
+  }
+
+  function makeSearchWorker(){
+    const source = `
+      const comboKey = (arr) => [...arr].map(n => String(n).padStart(2,'0')).sort().join('-');
+      const getCombinations = (arr, size) => {
+        const out = [];
+        const dfs = (start, path) => {
+          if (path.length === size) { out.push(path.slice()); return; }
+          for (let i=start; i<arr.length; i++) { path.push(arr[i]); dfs(i+1, path); path.pop(); }
+        };
+        dfs(0, []);
+        return out;
+      };
+      const shuffle = (arr) => {
+        const copy = arr.slice();
+        for (let i=copy.length-1; i>0; i--) {
+          const j = Math.floor(Math.random() * (i+1));
+          [copy[i], copy[j]] = [copy[j], copy[i]];
+        }
+        return copy;
+      };
+      const countAdjacent = (nums) => nums.slice(1).reduce((acc, n, i) => acc + ((n - nums[i]) === 1 ? 1 : 0), 0);
+      const buildTensTail = (nums) => {
+        const tens = {}, tails = {};
+        nums.forEach(n => {
+          const v = parseInt(n, 10);
+          const t = Math.floor(v / 10);
+          const tail = v % 10;
+          tens[t] = (tens[t] || 0) + 1;
+          tails[tail] = (tails[tail] || 0) + 1;
+        });
+        return { maxTens: Math.max(0, ...Object.values(tens)), maxTail: Math.max(0, ...Object.values(tails)) };
+      };
+      const evaluateGroup = (group, hotSet, pairCounts, tripleCounts, pairThreshold, tripleThreshold) => {
+        const nums = group.map(n => parseInt(n,10)).sort((a,b)=>a-b);
+        let pairRisk = 0, tripleRisk = 0;
+        getCombinations(group, 2).forEach(pair => { if ((pairCounts[comboKey(pair)] || 0) >= pairThreshold) pairRisk++; });
+        getCombinations(group, 3).forEach(triple => { if ((tripleCounts[comboKey(triple)] || 0) >= tripleThreshold) tripleRisk++; });
+        const hotCount = group.filter(n => hotSet.has(n)).length;
+        const { maxTens, maxTail } = buildTensTail(group);
+        const adjacent = countAdjacent(nums);
+        const odd = nums.filter(n => n % 2 === 1).length;
+        const oddEvenGap = Math.abs(odd - (nums.length - odd));
+        const span = nums[nums.length - 1] - nums[0];
+        const ok = pairRisk === 0 && tripleRisk === 0 && hotCount <= 2 && adjacent <= 2 && maxTens <= 3 && maxTail <= 2 && oddEvenGap <= 3 && span >= 8;
+        const score = pairRisk * 120 + tripleRisk * 220 + Math.max(0, hotCount - 1) * 18 + adjacent * 8 + Math.max(0, maxTens - 2) * 10 + Math.max(0, maxTail - 1) * 8 + Math.max(0, oddEvenGap - 1) * 6;
+        return { ok, score, pairRisk, tripleRisk, hotCount, adjacent, maxTens, maxTail, oddEvenGap, span };
+      };
+      onmessage = (e) => {
+        const data = e.data || {};
+        if (data.type !== 'start') return;
+        const { maxNum, groupNames, target, analysis } = data.payload;
+        const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, '0'));
+        const hotSet = new Set((analysis.hot || []).slice(0, 8));
+        const pairCounts = analysis.pairCounts || {};
+        const tripleCounts = analysis.tripleCounts || {};
+        const pairThreshold = analysis.drawCount >= 80 ? 3 : 2;
+        const tripleThreshold = 2;
+        const startedAt = Date.now();
+        const batchSize = 5;
+        let searched = 0;
+        const stageText = (v) => v < 25 ? '建立第一組候選' : v < 50 ? '建立第二組候選' : v < 75 ? '建立第三、四組候選' : '建立全車與最終驗證';
+        while (searched < target) {
+          const limit = Math.min(target, searched + batchSize);
+          for (let i = searched; i < limit; i++) {
+            const shuffled = shuffle(allNums);
+            const g1 = shuffled.slice(0, 5).sort();
+            const g2 = shuffled.slice(5, 10).sort();
+            const g3 = shuffled.slice(10, 15).sort();
+            const g4 = shuffled.slice(15, 20).sort();
+            const g5 = shuffled.slice(20).sort();
+            const groups = [g1, g2, g3, g4];
+            const evals = groups.map(g => evaluateGroup(g, hotSet, pairCounts, tripleCounts, pairThreshold, tripleThreshold));
+            searched = i + 1;
+            postMessage({ type: 'progress', payload: { searched, target, elapsedMs: Date.now() - startedAt, stageLabel: stageText(searched), statusText: '搜尋中', footerText: '系統正在排除近50期高風險雙號 / 三號，並分散熱號到不同組別。', candidatePreview: { g1, g2, g3, g4, g5 } } });
+            if (evals.every(x => x.ok)) {
+              const totalScore = evals.reduce((acc, x) => acc + x.score, 0);
+              postMessage({ type: 'result', payload: { score: totalScore, searchedCandidates: searched, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: Date.now() - startedAt, twoHitRisk: evals.reduce((a,x)=>a+x.pairRisk,0), threeHitRisk: evals.reduce((a,x)=>a+x.tripleRisk,0), lowRiskGroups: 4, mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'low', downgraded: false, whyQualified: '已避開近50期高風險雙號 / 三號，且熱號已分散到不同組。', groups: { [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 } } });
+              return;
+            }
+          }
+        }
+        postMessage({ type: 'result', payload: { noQualifiedResult: true, searchedCandidates: searched, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: Date.now() - startedAt, lowRiskGroups: 0, selectedPool: 'none' } });
+      };
+    `;
+    const blob = new Blob([source], { type: 'application/javascript' });
+    return new Worker(URL.createObjectURL(blob));
+  }
+
+  function startWorkerSearch(id, analysis){
+    terminateSearchWorker();
+    searchAnimState.currentLotteryId = id;
+    searchAnimState.cancelRequested = false;
+    const worker = makeSearchWorker();
+    searchAnimState.worker = worker;
+    const target = 100;
+    const groupNames = [
+      $(`${id}_prize1Desc`).value.trim() || '第一組',
+      $(`${id}_prize2Desc`).value.trim() || '第二組',
+      $(`${id}_prize3Desc`).value.trim() || '第三組',
+      $(`${id}_prize4Desc`).value.trim() || '第四組',
+      $(`${id}_prize5Desc`).value.trim() || '全車號碼'
+    ];
+    return new Promise((resolve, reject) => {
+      worker.onmessage = (evt) => {
+        const msg = evt.data || {};
+        if (msg.type === 'progress') {
+          const p = msg.payload || {};
+          renderSearchProgress(id, p);
+          if (p.candidatePreview) {
+            const cards = [p.candidatePreview.g1, p.candidatePreview.g2, p.candidatePreview.g3, p.candidatePreview.g4, p.candidatePreview.g5];
+            cards.forEach((nums, idx) => {
+              const numsEl = $(`searchNums_${idx}`);
+              const hintEl = $(`searchHint_${idx}`);
+              const badgeEl = $(`searchBadge_${idx}`);
+              if (numsEl) numsEl.textContent = (nums || []).join('、');
+              if (hintEl) hintEl.textContent = idx < 4 ? '排除高風險雙號 / 三號與熱號集中...' : '高風險熱號改放全車承接...';
+              if (badgeEl) badgeEl.textContent = '搜尋中';
+            });
+          }
+        } else if (msg.type === 'result') {
+          const payload = msg.payload || {};
+          terminateSearchWorker();
+          resolve(payload);
+        } else if (msg.type === 'error') {
+          terminateSearchWorker();
+          reject(new Error(msg.message || 'worker error'));
+        }
+      };
+      worker.onerror = (err) => {
+        terminateSearchWorker();
+        reject(err);
+      };
+      worker.postMessage({ type: 'start', payload: { maxNum: state.lotteries[id].cfg.maxNum, groupNames, target, analysis: { drawCount: analysis.drawCount || 0, hot: analysis.hot || [], pairCounts: analysis.pairCounts || {}, tripleCounts: analysis.tripleCounts || {} } } });
+    });
   }
 
   function openSearchOverlay(id){
@@ -992,7 +1137,10 @@
 
   function closeSearchOverlay(force=false){
     const els = getSearchEls();
-    if(!force && searchAnimState.running) return;
+    if(!force && searchAnimState.running){
+      searchAnimState.cancelRequested = true;
+      terminateSearchWorker();
+    }
     clearSearchTimers();
     els.overlay.classList.remove('show');
     els.overlay.setAttribute('aria-hidden','true');
@@ -2868,14 +3016,14 @@ function bindEvents(id){
       btn.textContent = '搜尋低風險中...';
       setConfirmAvailability(id, false, "系統正在搜尋合格低風險方案");
       openSearchOverlay(id);
-      renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
+      renderSearchProgress(id, { searched: 0, target: 100, elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
       await sleep(32);
       try {
-        const bestResult = await buildSmartGroups(id, analysis, (progress)=>renderSearchProgress(id, progress));
+        const bestResult = await startWorkerSearch(id, analysis);
         if(!bestResult || bestResult.noQualifiedResult){
           state.lotteries[id].generatedGroups = null;
           getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>低風險方案不足</b><span style="color:#ffd8a8;">本次已自動分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案，因此不顯示、不開放通報。</span></div>`;
-          updateSearchOverlay(id, { searched: bestResult?.searchedCandidates || 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: bestResult?.elapsedMs || 0, stageLabel: '未找到合格方案', statusText: '本輪失敗', footerText: `本輪已分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案。` });
+          updateSearchOverlay(id, { searched: bestResult?.searchedCandidates || 0, target: 100, elapsedMs: bestResult?.elapsedMs || 0, stageLabel: '未找到合格方案', statusText: '本輪失敗', footerText: `本輪已分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案。` });
           searchAnimState.running = false;
           setConfirmAvailability(id, false, "未找到合格低風險方案");
           showMiniNotice(`${state.lotteries[id].cfg.title}：未找到合格低風險方案，本次不顯示也不開放通報`, "warn");
@@ -2889,6 +3037,8 @@ function bindEvents(id){
         setConfirmAvailability(id, true);
         showMiniNotice(`${state.lotteries[id].cfg.title}：已找到第一組合格低風險方案，可直接通報`, "ok");
       } finally {
+        terminateSearchWorker();
+        searchAnimState.running = false;
         btn.disabled = false;
         btn.textContent = originalText;
       }
