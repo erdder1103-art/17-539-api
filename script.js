@@ -1024,22 +1024,28 @@
     const even = nums.length - odd;
     const adjacent = nums.slice(1).reduce((acc, n, idx)=> acc + (n - nums[idx] === 1 ? 1 : 0), 0);
     const tens = {};
+    const tails = {};
     nums.forEach(n=>{
       const bucket = Math.floor(n / 10);
+      const tail = n % 10;
       tens[bucket] = (tens[bucket] || 0) + 1;
+      tails[tail] = (tails[tail] || 0) + 1;
     });
     const maxTens = Math.max(...Object.values(tens), 0);
+    const maxTail = Math.max(...Object.values(tails), 0);
     const span = nums[nums.length - 1] - nums[0];
+    const oddEvenGap = Math.abs(odd - even);
     return {
       odd,
       even,
       adjacent,
-      oddEvenGap: Math.abs(odd - even),
+      oddEvenGap,
       maxTens,
+      maxTail,
       span,
-      isLowRisk: adjacent <= 1 && maxTens <= 2 && Math.abs(odd - even) <= 1 && span >= 14,
-      isMediumRisk: adjacent <= 2 && maxTens <= 3 && Math.abs(odd - even) <= 3 && span >= 10,
-      shouldReject: adjacent >= 3 || maxTens >= 4 || Math.abs(odd - even) >= 4 || span <= 7
+      isLowRisk: adjacent <= 1 && maxTens <= 2 && maxTail <= 1 && oddEvenGap <= 1 && span >= 14,
+      isMediumRisk: adjacent <= 2 && maxTens <= 3 && maxTail <= 2 && oddEvenGap <= 3 && span >= 10,
+      shouldReject: adjacent >= 2 || maxTens >= 3 || maxTail >= 2 || oddEvenGap >= 3 || span <= 11
     };
   }
 
@@ -1078,11 +1084,11 @@
   }
 
   function chooseAdaptiveTries(drawCount){
-    if(drawCount >= 200) return 90000;
-    if(drawCount >= 150) return 70000;
-    if(drawCount >= 100) return 50000;
-    if(drawCount >= 50) return 32000;
-    return 22000;
+    if(drawCount >= 200) return 180000;
+    if(drawCount >= 150) return 140000;
+    if(drawCount >= 100) return 110000;
+    if(drawCount >= 50) return 80000;
+    return 50000;
   }
 
   function buildSmartGroups(id, analysis){
@@ -1098,8 +1104,6 @@
     ];
 
     let bestLowRisk = null;
-    let bestMediumRisk = null;
-    let bestFallback = null;
     const tries = chooseAdaptiveTries(analysis.drawCount || 0);
 
     for(let t=0;t<tries;t++){
@@ -1122,6 +1126,8 @@
         rejectedGroups: evalResult.rejectedGroups,
         analyzedDrawCount: analysis.drawCount || 0,
         generatedTryCount: tries,
+        selectedPool: 'low',
+        downgraded: false,
         groups: {
           [groupNames[0]]: g1,
           [groupNames[1]]: g2,
@@ -1133,21 +1139,13 @@
 
       if(candidate.rejectedGroups === 0 && candidate.lowRiskGroups === 4){
         if(!bestLowRisk || candidate.score < bestLowRisk.score) bestLowRisk = candidate;
-        if(bestLowRisk && bestLowRisk.twoHitRisk === 0 && bestLowRisk.threeHitRisk === 0 && t > Math.min(12000, Math.floor(tries * 0.35))){
+        if(bestLowRisk && bestLowRisk.twoHitRisk === 0 && bestLowRisk.threeHitRisk === 0 && t > Math.min(40000, Math.floor(tries * 0.45))){
           break;
         }
-        continue;
       }
-
-      if(candidate.rejectedGroups === 0 && candidate.lowRiskGroups >= 2){
-        if(!bestMediumRisk || candidate.score < bestMediumRisk.score) bestMediumRisk = candidate;
-        continue;
-      }
-
-      if(!bestFallback || candidate.score < bestFallback.score) bestFallback = candidate;
     }
 
-    return bestLowRisk || bestMediumRisk || bestFallback;
+    return bestLowRisk;
   }
 
   function renderGroupPreview(id, bestResult){
@@ -1175,7 +1173,7 @@
 
     const row = document.createElement("div");
     row.className = "groupRow";
-    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk} ｜ 低風險組數：${bestResult.lowRiskGroups || 0}/4 ｜ 分析期數：${bestResult.analyzedDrawCount || 0} ｜ 搜索候選：${bestResult.generatedTryCount || 0}</span>`;
+    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk} ｜ 低風險組數：${bestResult.lowRiskGroups || 0}/4 ｜ 分析期數：${bestResult.analyzedDrawCount || 0} ｜ 搜索候選：${bestResult.generatedTryCount || 0} ｜ 採用池：${bestResult.selectedPool === 'low' ? '低風險' : '非低風險'}${bestResult.downgraded ? '（已降級）' : ''}</span>`;
     box.appendChild(row);
   }
 
@@ -2080,15 +2078,18 @@ function bindEvents(id){
       renderHistoryAnalysis(id, analysis);
 
       const bestResult = buildSmartGroups(id, analysis);
+      if(!bestResult){
+        state.lotteries[id].generatedGroups = null;
+        getEls(id).groupPreview.innerHTML = '<div class="groupRow"><b>低風險方案不足</b><span style="color:#ffd8a8;">本次未找到 4 組都屬低風險的方案，系統已停止輸出，避免產生中高風險組合。請擴大歷史分析期數後重試。</span></div>';
+        showMiniNotice(`${state.lotteries[id].cfg.title}：未找到合格低風險方案，本次不輸出中高風險組合`, "warn");
+        persistAll();
+        return;
+      }
       state.lotteries[id].generatedGroups = bestResult;
       renderGroupPreview(id, bestResult);
       applyGeneratedGroupsToLog(id, bestResult.groups);
 
-      if(bestResult.twoHitRisk === 0 && bestResult.threeHitRisk === 0){
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到低風險優先分組，歷史 2 顆 / 3 顆碰撞都為 0`, "ok");
-      }else{
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已生成低風險優先方案，2碰撞=${bestResult.twoHitRisk}，3碰撞=${bestResult.threeHitRisk}，低風險組數=${bestResult.lowRiskGroups || 0}/4`, "info");
-      }
+      showMiniNotice(`${state.lotteries[id].cfg.title}：已找到 4 組皆為低風險的分組方案`, "ok");
     });
 
     [1,2,3,4,5].forEach(i=>{

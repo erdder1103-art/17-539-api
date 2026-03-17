@@ -134,6 +134,30 @@ function groupSpan(group) {
   return sorted[sorted.length - 1] - sorted[0];
 }
 
+function buildSingleGroupRisk(group) {
+  const nums = (group || []).map(Number).sort((a, b) => a - b);
+  const odd = nums.filter(n => n % 2 === 1).length;
+  const even = nums.length - odd;
+  const tens = {};
+  const tails = {};
+  let adjacent = 0;
+  for (let i = 0; i < nums.length; i += 1) {
+    const n = nums[i];
+    const tensBucket = Math.floor(n / 10);
+    const tailBucket = n % 10;
+    tens[tensBucket] = (tens[tensBucket] || 0) + 1;
+    tails[tailBucket] = (tails[tailBucket] || 0) + 1;
+    if (i > 0 && nums[i] - nums[i - 1] === 1) adjacent += 1;
+  }
+  const maxTens = Math.max(0, ...Object.values(tens));
+  const maxTail = Math.max(0, ...Object.values(tails));
+  const span = nums.length ? nums[nums.length - 1] - nums[0] : 0;
+  const oddEvenGap = Math.abs(odd - even);
+  const isLowRisk = adjacent <= 1 && maxTens <= 2 && maxTail <= 1 && oddEvenGap <= 1 && span >= 14;
+  const isReject = adjacent >= 2 || maxTens >= 3 || maxTail >= 2 || oddEvenGap >= 3 || span <= 11;
+  return { adjacent, maxTens, maxTail, span, oddEvenGap, isLowRisk, isReject };
+}
+
 function buildFeatureSnapshot(tracking) {
   const groups = tracking.groups || {};
   const mainNumbers = getAllMainNumbers(groups).map(Number);
@@ -154,6 +178,12 @@ function buildFeatureSnapshot(tracking) {
   const fullSet = new Set((groups.full || []).map(String));
   const groupOverlaps = getMainGroups(groups).map((g) => g.filter((n) => fullSet.has(String(n))).length);
   const spans = getMainGroups(groups).map(groupSpan);
+  const groupRiskStats = getMainGroups(groups).map(buildSingleGroupRisk);
+  const lowRiskGroupCount = groupRiskStats.filter(g => g.isLowRisk).length;
+  const rejectedGroupCount = groupRiskStats.filter(g => g.isReject).length;
+  const maxGroupAdjacent = Math.max(0, ...groupRiskStats.map(g => g.adjacent));
+  const maxGroupTailCount = Math.max(0, ...groupRiskStats.map(g => g.maxTail));
+  const maxGroupTensCount = Math.max(0, ...groupRiskStats.map(g => g.maxTens));
 
   return {
     oddEvenBalance: `${oddCount}:${evenCount}`,
@@ -173,7 +203,12 @@ function buildFeatureSnapshot(tracking) {
     spanSummary: spans,
     avgSpan: spans.length ? Number((spans.reduce((a, b) => a + b, 0) / spans.length).toFixed(2)) : 0,
     mainUniqueCount: new Set(mainNumbers).size,
-    fullUniqueCount: new Set(fullNumbers).size
+    fullUniqueCount: new Set(fullNumbers).size,
+    lowRiskGroupCount,
+    rejectedGroupCount,
+    maxGroupAdjacent,
+    maxGroupTailCount,
+    maxGroupTensCount
   };
 }
 
@@ -297,21 +332,38 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   const positives = [];
   const negatives = [];
 
-  if (features.adjacentPairs <= 2) {
+  if (features.lowRiskGroupCount === 4) {
+    score += 14;
+    positives.push('四組皆為低風險');
+  } else if (features.lowRiskGroupCount >= 3) {
+    score += 6;
+    positives.push('多數分組為低風險');
+  } else {
+    score -= 14;
+    negatives.push('低風險組數不足');
+  }
+  if (features.rejectedGroupCount === 0) {
+    score += 6;
+    positives.push('分組結構穩定');
+  } else {
+    score -= 16;
+    negatives.push('分組存在高風險結構');
+  }
+  if (features.maxGroupAdjacent <= 1) {
     score += 5;
-    positives.push('連號偏少');
+    positives.push('連號控制穩定');
   } else {
     score -= 7;
     negatives.push('連號偏多');
   }
-  if (features.maxTailCount <= 3) {
+  if (features.maxGroupTailCount <= 1) {
     score += 5;
     positives.push('尾數分散');
   } else {
     score -= 8;
     negatives.push('尾數過度集中');
   }
-  if (features.maxTensCount <= 6) {
+  if (features.maxGroupTensCount <= 2) {
     score += 4;
     positives.push('十位區分布較平均');
   } else {
@@ -346,12 +398,18 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   }
 
   const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.55;
-  const tendency = Math.max(0.35, Math.min(0.78, basePass + score / 120));
+  const tendency = Math.max(0.35, Math.min(0.78, basePass + score / 140));
   const severeRatio = total ? (bucket.labels['靠3.3倍'] || 0) / total : 0.18;
-  const severeRisk = Math.max(0.05, Math.min(0.35, severeRatio + Math.max(0, -score) / 140));
+  const structuralPenalty = features.rejectedGroupCount > 0 ? 0.12 : features.lowRiskGroupCount === 4 ? -0.05 : 0.04;
+  const severeRisk = Math.max(0.03, Math.min(0.35, severeRatio + Math.max(0, -score) / 180 + structuralPenalty));
   const retryRate = Math.max(0.08, Math.min(0.5, 1 - tendency - severeRisk));
   const reliability = Math.max(38, Math.min(88, 42 + Math.min(total, 50) * 0.45 + Math.min(Math.abs(score), 15)));
-  const riskLevel = severeRisk >= 0.24 || tendency < 0.5 ? '高' : severeRisk >= 0.16 || tendency < 0.58 ? '中' : '低';
+  let riskLevel = '中';
+  if (features.lowRiskGroupCount === 4 && features.rejectedGroupCount === 0 && features.maxGroupAdjacent <= 1 && features.maxGroupTailCount <= 1 && features.maxGroupTensCount <= 2 && tendency >= 0.5) {
+    riskLevel = '低';
+  } else if (features.rejectedGroupCount > 0 || severeRisk >= 0.24 || tendency < 0.5) {
+    riskLevel = '高';
+  }
 
   return {
     trackingId: tracking.id || '',
