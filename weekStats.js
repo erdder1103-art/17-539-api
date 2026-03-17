@@ -1,7 +1,6 @@
-const fs = require('fs');
 const { getTaipeiDate, getTaipeiWeekday } = require('./utils/time');
 
-const { getDataFile, getDataDir } = require('./dataPaths');
+const { getDataFile, getDataDir, initializeDataFiles, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
 
 const FILE = getDataFile('weekly_stats.json');
 const WEEK_539 = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
@@ -32,10 +31,8 @@ function createEmpty(type) {
 
 function readStore() {
   try {
-    if (!fs.existsSync(FILE)) {
-      return { '539': createEmpty('539'), 'ttl': createEmpty('ttl') };
-    }
-    const parsed = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    initializeDataFiles();
+    const parsed = readJsonSafe(FILE, { '539': createEmpty('539'), 'ttl': createEmpty('ttl') });
     ['539', 'ttl'].forEach((key) => {
       if (!parsed[key]) parsed[key] = createEmpty(key);
       if (parsed[key].summary && typeof parsed[key].summary.fail === 'number') {
@@ -55,8 +52,8 @@ function readStore() {
 }
 
 function writeStore(data) {
-  fs.mkdirSync(getDataDir(), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(data, null, 2), 'utf8');
+  initializeDataFiles();
+  writeJsonAtomic(FILE, data);
 }
 
 function ensureWeek(record, type) {

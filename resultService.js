@@ -1,10 +1,9 @@
-const fs = require('fs');
 const { sendTelegramMessage } = require('./telegram');
 const { updateWeeklyStats, buildWeeklySummaryText, getWeekKey } = require('./weekStats');
 const { getActiveTrackings, settleTracking } = require('./trackingStore');
 const { formatTaipeiDateTime } = require('./utils/time');
 
-const { getDataFile, getDataDir } = require('./dataPaths');
+const { getDataFile, getDataDir, initializeDataFiles, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
 
 const RESULT_STATE_FILE = getDataFile('result_state.json');
 const RESULT_HISTORY_FILE = getDataFile('result_history.json');

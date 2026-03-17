@@ -1,18 +1,15 @@
-const fs = require('fs');
-const { getDataDir, getDataFile } = require('./dataPaths');
+const { getDataFile, initializeDataFiles, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
 
-const DATA_DIR = getDataDir();
 const BOT_CONFIG_FILE = getDataFile('bot_config.json');
 
-function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+function ensureStore() {
+  initializeDataFiles();
 }
 
 function readBotConfig() {
-  ensureDir();
-  if (!fs.existsSync(BOT_CONFIG_FILE)) return { botToken: '', chatId: '', updatedAt: '' };
+  ensureStore();
   try {
-    const raw = JSON.parse(fs.readFileSync(BOT_CONFIG_FILE, 'utf8'));
+    const raw = readJsonSafe(BOT_CONFIG_FILE, { botToken: '', chatId: '', updatedAt: '' });
     return {
       botToken: String(raw.botToken || '').trim(),
       chatId: String(raw.chatId || '').trim(),
@@ -24,13 +21,13 @@ function readBotConfig() {
 }
 
 function writeBotConfig(input = {}) {
-  ensureDir();
+  ensureStore();
   const data = {
     botToken: String(input.botToken || '').trim(),
     chatId: String(input.chatId || '').trim(),
     updatedAt: new Date().toISOString()
   };
-  fs.writeFileSync(BOT_CONFIG_FILE, JSON.stringify(data, null, 2), 'utf8');
+  writeJsonAtomic(BOT_CONFIG_FILE, data);
   return data;
 }
 

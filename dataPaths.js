@@ -24,40 +24,84 @@ function getDataFile(name) {
   return path.join(ACTIVE_DATA_DIR, name);
 }
 
+function ensureDir(dir = ACTIVE_DATA_DIR) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 function readJsonSafe(file, fallback) {
   try {
     if (!fs.existsSync(file)) return fallback;
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    const raw = fs.readFileSync(file, 'utf8').trim();
+    if (!raw) return fallback;
+    return JSON.parse(raw);
   } catch (err) {
     return fallback;
   }
 }
 
-function migrateLocalDataIfNeeded() {
-  if (ACTIVE_DATA_DIR === LOCAL_DATA_DIR) return { migrated: false, reason: 'using-local-data-dir' };
-  try {
-    fs.mkdirSync(ACTIVE_DATA_DIR, { recursive: true });
-    if (!fs.existsSync(LOCAL_DATA_DIR)) return { migrated: false, reason: 'no-local-data-dir' };
+function writeTextAtomic(file, text) {
+  ensureDir(path.dirname(file));
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, file);
+}
 
-    const localFiles = fs.readdirSync(LOCAL_DATA_DIR).filter((name) => fs.statSync(path.join(LOCAL_DATA_DIR, name)).isFile());
-    if (!localFiles.length) return { migrated: false, reason: 'no-local-files' };
+function writeJsonAtomic(file, data) {
+  writeTextAtomic(file, JSON.stringify(data, null, 2));
+}
 
-    const volumeFiles = fs.existsSync(ACTIVE_DATA_DIR)
-      ? fs.readdirSync(ACTIVE_DATA_DIR).filter((name) => fs.statSync(path.join(ACTIVE_DATA_DIR, name)).isFile())
-      : [];
-    if (volumeFiles.length) return { migrated: false, reason: 'volume-already-has-files' };
+const DEFAULT_FILE_CONTENTS = {
+  'tracking.json': { '539': { system: null, manuals: [] }, 'ttl': { system: null, manuals: [] } },
+  'tracking_history.json': [],
+  'result_history.json': [],
+  'result_state.json': { '539': { processedIssues: [] }, 'ttl': { processedIssues: [] } },
+  'learning_state.json': { '539': { system: { total: 0, labels: {}, lessons: {} } }, 'ttl': { system: { total: 0, labels: {}, lessons: {} } } },
+  'weekly_stats.json': { '539': null, 'ttl': null },
+  'bot_config.json': { botToken: '', chatId: '', updatedAt: '' }
+};
 
-    let copied = 0;
-    for (const name of localFiles) {
-      const src = path.join(LOCAL_DATA_DIR, name);
-      const dest = path.join(ACTIVE_DATA_DIR, name);
-      fs.copyFileSync(src, dest);
-      copied += 1;
+function initializeDataFiles() {
+  ensureDir(ACTIVE_DATA_DIR);
+  const created = [];
+  for (const [name, initialValue] of Object.entries(DEFAULT_FILE_CONTENTS)) {
+    const file = getDataFile(name);
+    if (!fs.existsSync(file)) {
+      writeJsonAtomic(file, initialValue);
+      created.push(name);
     }
-    return { migrated: copied > 0, copied, source: LOCAL_DATA_DIR, target: ACTIVE_DATA_DIR };
-  } catch (err) {
-    return { migrated: false, reason: 'migration-error', error: err.message };
   }
+  return {
+    initialized: true,
+    created,
+    target: ACTIVE_DATA_DIR,
+    usedVolume: ACTIVE_DATA_DIR === DEFAULT_VOLUME_DIR
+  };
+}
+
+function getStorageDebug() {
+  const files = {};
+  for (const name of Object.keys(DEFAULT_FILE_CONTENTS)) {
+    const volFile = getDataFile(name);
+    const localFile = path.join(LOCAL_DATA_DIR, name);
+    const describe = (file) => {
+      try {
+        if (!fs.existsSync(file)) return { exists: false };
+        const stat = fs.statSync(file);
+        const raw = fs.readFileSync(file, 'utf8');
+        return { exists: true, size: stat.size, mtime: stat.mtime.toISOString(), preview: raw.slice(0, 120) };
+      } catch (err) {
+        return { exists: false, error: err.message };
+      }
+    };
+    files[name] = { active: describe(volFile), local: describe(localFile) };
+  }
+  return {
+    dataDir: ACTIVE_DATA_DIR,
+    defaultVolumeDir: DEFAULT_VOLUME_DIR,
+    localDataDir: LOCAL_DATA_DIR,
+    volumeMounted: ACTIVE_DATA_DIR === DEFAULT_VOLUME_DIR,
+    files
+  };
 }
 
 module.exports = {
@@ -66,6 +110,9 @@ module.exports = {
   ACTIVE_DATA_DIR,
   getDataDir,
   getDataFile,
+  ensureDir,
   readJsonSafe,
-  migrateLocalDataIfNeeded
+  writeJsonAtomic,
+  initializeDataFiles,
+  getStorageDebug
 };

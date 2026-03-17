@@ -1,34 +1,18 @@
-const fs = require('fs');
 const { formatTaipeiDateTime, formatTaipeiCompact } = require('./utils/time');
-const { getDataDir, getDataFile } = require('./dataPaths');
+const { getDataDir, getDataFile, initializeDataFiles, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
 
 const DATA_DIR = getDataDir();
 const TRACKING_FILE = getDataFile('tracking.json');
 const HISTORY_FILE = getDataFile('tracking_history.json');
 
-function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-function ensureFile(file, fallback) {
-  ensureDir();
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, JSON.stringify(fallback, null, 2), 'utf8');
-  }
-}
-
 function readJson(file, fallback) {
-  ensureFile(file, fallback);
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (err) {
-    return fallback;
-  }
+  initializeDataFiles();
+  return readJsonSafe(file, fallback);
 }
 
 function writeJson(file, data) {
-  ensureDir();
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  initializeDataFiles();
+  writeJsonAtomic(file, data);
 }
 
 function normalizeLotteryType(lotteryType) {
