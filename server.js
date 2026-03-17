@@ -12,9 +12,11 @@ const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
 const { getBotRuntimeSummary, testTelegramSend } = require('./telegram');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
+const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, migrateLocalDataIfNeeded } = require('./dataPaths');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const volumeMigration = migrateLocalDataIfNeeded();
 
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
@@ -155,7 +157,7 @@ async function updateAll() {
 app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, timezone: 'Asia/Taipei', count: cache539.length, draws: cache539 }));
 app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, timezone: 'Asia/Taipei', count: cacheTTL.length, draws: cacheTTL }));
 app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, timezone: 'Asia/Taipei', lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
-app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate, timezone: 'Asia/Taipei', isUpdating, telegram: getBotRuntimeSummary() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate, timezone: 'Asia/Taipei', isUpdating, telegram: getBotRuntimeSummary(), storage: { dataDir: ACTIVE_DATA_DIR, defaultVolumeDir: DEFAULT_VOLUME_DIR, localDataDir: LOCAL_DATA_DIR, volumeMounted: ACTIVE_DATA_DIR === DEFAULT_VOLUME_DIR, migration: volumeMigration } }));
 app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
 app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
@@ -234,6 +236,9 @@ process.on('uncaughtException', (err) => console.error('uncaughtException:', err
 
 app.listen(PORT, async () => {
   console.log(`API Server running http://localhost:${PORT}`);
+  console.log('Storage data dir:', ACTIVE_DATA_DIR);
+  console.log('Storage volume dir:', DEFAULT_VOLUME_DIR);
+  console.log('Storage migration:', JSON.stringify(volumeMigration));
   await updateAll();
   setInterval(() => {
     updateAll().catch((err) => console.error('updateAll failed:', err.message));

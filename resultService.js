@@ -1,13 +1,14 @@
 const fs = require('fs');
-const path = require('path');
 const { sendTelegramMessage } = require('./telegram');
 const { updateWeeklyStats, buildWeeklySummaryText, getWeekKey } = require('./weekStats');
 const { getActiveTrackings, settleTracking } = require('./trackingStore');
 const { formatTaipeiDateTime } = require('./utils/time');
 
-const RESULT_STATE_FILE = path.join(__dirname, 'data', 'result_state.json');
-const RESULT_HISTORY_FILE = path.join(__dirname, 'data', 'result_history.json');
-const LEARNING_FILE = path.join(__dirname, 'data', 'learning_state.json');
+const { getDataFile, getDataDir } = require('./dataPaths');
+
+const RESULT_STATE_FILE = getDataFile('result_state.json');
+const RESULT_HISTORY_FILE = getDataFile('result_history.json');
+const LEARNING_FILE = getDataFile('learning_state.json');
 
 function readJson(file, fallback) {
   try {
@@ -19,6 +20,7 @@ function readJson(file, fallback) {
 }
 
 function writeJson(file, data) {
+  fs.mkdirSync(getDataDir(), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
 }
 

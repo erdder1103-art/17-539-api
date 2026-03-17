@@ -1,8 +1,9 @@
 const fs = require('fs');
-const path = require('path');
 const { getTaipeiDate, getTaipeiWeekday } = require('./utils/time');
 
-const FILE = path.join(__dirname, 'data', 'weekly_stats.json');
+const { getDataFile, getDataDir } = require('./dataPaths');
+
+const FILE = getDataFile('weekly_stats.json');
 const WEEK_539 = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 const WEEK_TTL = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
 
@@ -54,6 +55,7 @@ function readStore() {
 }
 
 function writeStore(data) {
+  fs.mkdirSync(getDataDir(), { recursive: true });
   fs.writeFileSync(FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 

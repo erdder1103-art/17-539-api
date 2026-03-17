@@ -1,8 +1,8 @@
 const fs = require('fs');
-const path = require('path');
+const { getDataDir, getDataFile } = require('./dataPaths');
 
-const DATA_DIR = path.join(__dirname, 'data');
-const BOT_CONFIG_FILE = path.join(DATA_DIR, 'bot_config.json');
+const DATA_DIR = getDataDir();
+const BOT_CONFIG_FILE = getDataFile('bot_config.json');
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

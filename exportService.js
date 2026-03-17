@@ -1,13 +1,14 @@
 const fs = require('fs');
-const path = require('path');
 const XLSX = require('xlsx');
 const { formatTaipeiDateTime } = require('./utils/time');
 
-const DATA_DIR = path.join(__dirname, 'data');
-const EXPORT_DIR = path.join(DATA_DIR, 'exports');
-const TRACKING_FILE = path.join(DATA_DIR, 'tracking.json');
-const TRACKING_HISTORY_FILE = path.join(DATA_DIR, 'tracking_history.json');
-const RESULT_HISTORY_FILE = path.join(DATA_DIR, 'result_history.json');
+const { getDataDir, getDataFile } = require('./dataPaths');
+
+const DATA_DIR = getDataDir();
+const EXPORT_DIR = require('path').join(DATA_DIR, 'exports');
+const TRACKING_FILE = getDataFile('tracking.json');
+const TRACKING_HISTORY_FILE = getDataFile('tracking_history.json');
+const RESULT_HISTORY_FILE = getDataFile('result_history.json');
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
