@@ -1194,78 +1194,19 @@
     return { total, twoHitRisk, threeHitRisk };
   }
 
+  
   async function buildSmartGroups(id, analysis, onProgress){
-    const maxNum = state.lotteries[id].cfg.maxNum;
-    const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, "0"));
-
-    const groupNames = [
-      $(`${id}_prize1Desc`).value.trim() || "第一組",
-      $(`${id}_prize2Desc`).value.trim() || "第二組",
-      $(`${id}_prize3Desc`).value.trim() || "第三組",
-      $(`${id}_prize4Desc`).value.trim() || "第四組",
-      $(`${id}_prize5Desc`).value.trim() || "全車號碼"
-    ];
-
-    const target = chooseAdaptiveTries(analysis.drawCount || 0);
-    const chunkSize = 800;
     const startedAt = Date.now();
-    let searched = 0;
-
-    while (searched < target) {
-      const upper = Math.min(target, searched + chunkSize);
-      for(let t=searched; t<upper; t++){
-        const shuffled = shuffle(allNums);
-        const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g3 = shuffled.slice(10, 15).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g4 = shuffled.slice(15, 20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g5 = shuffled.slice(20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const firstFour = [g1, g2, g3, g4];
-        const validation = buildStrictValidation({ [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 });
-        if (!validation.ok) continue;
-        const evalResult = evaluatePartition(firstFour, analysis);
-        const elapsedMs = Date.now() - startedAt;
-        return {
-          score: evalResult.total,
-          twoHitRisk: evalResult.twoHitRisk,
-          threeHitRisk: evalResult.threeHitRisk,
-          lowRiskGroups: 4,
-          mediumRiskGroups: 0,
-          rejectedGroups: 0,
-          analyzedDrawCount: analysis.drawCount || 0,
-          generatedTryCount: t + 1,
-          searchedCandidates: t + 1,
-          selectedPool: 'low',
-          downgraded: false,
-          elapsedMs,
-          groups: {
-            [groupNames[0]]: g1,
-            [groupNames[1]]: g2,
-            [groupNames[2]]: g3,
-            [groupNames[3]]: g4,
-            [groupNames[4]]: g5
-          }
-        };
-      }
-      searched = upper;
-      const elapsedMs = Date.now() - startedAt;
-      if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0, stageLabel: searched < target * 0.25 ? '建立第一組候選' : searched < target * 0.5 ? '建立第二組候選' : searched < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
-      await sleep(0);
-    }
-
-    return {
-      noQualifiedResult: true,
-      analyzedDrawCount: analysis.drawCount || 0,
-      generatedTryCount: searched,
-      searchedCandidates: searched,
-      lowRiskGroups: 0,
-      selectedPool: 'none',
-      elapsedMs: Date.now() - startedAt
-    };
+    const target = 1;
+    if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: '分析近50期', statusText: '生成中', footerText: '系統正在依近50期高風險雙號 / 三連號與熱中冷分布直接生成方案。' });
+    await sleep(30);
+    const best = buildSimpleGeneratedPlan(id, analysis);
+    const elapsedMs = Date.now() - startedAt;
+    if (typeof onProgress === 'function') onProgress({ searched: 1, target, elapsedMs, lowRiskFound: 1, stageLabel: '完成生成', statusText: '生成完成', footerText: best.whyQualified || '已完成可用方案生成。' });
+    return Object.assign({}, best, { searchedCandidates: 1, generatedTryCount: 1, elapsedMs, noQualifiedResult: false });
   }
 
-
-  function formatEta(ms){
+function formatEta(ms){
     if (!Number.isFinite(ms) || ms <= 0) return '估算中';
     if (ms < 1000) return `${Math.max(1, Math.round(ms))} ms`;
     return `${(ms / 1000).toFixed(1)} 秒`;

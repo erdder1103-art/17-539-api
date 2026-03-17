@@ -32,7 +32,14 @@ app.use((req, res, next) => {
 });
 
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+app.get('/index.html', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 let cache539 = [];
 let cacheTTL = [];

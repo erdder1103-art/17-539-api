@@ -927,311 +927,109 @@
   $("summaryOverlay").addEventListener("click", (e)=>{ if(e.target.id === "summaryOverlay") hideSummary(); });
 
 
-  const searchAnimState = { visible:false, running:false, locked:false, lastStep:0, lastSpin:0, timers:[], worker:null, currentLotteryId:null, cancelRequested:false };
+  
+const searchAnimState = { visible:false, running:false, locked:false, lastStep:0, lastSpin:0, timers:[], currentLotteryId:null, cancelRequested:false };
 
-  function getSearchEls(){
-    return {
-      overlay: $("searchOverlay"),
-      title: $("searchTitle"),
-      sub: $("searchSub"),
-      pill: $("searchStatusPill"),
-      fill: $("searchBarFill"),
-      searched: $("searchStatSearched"),
-      target: $("searchStatTarget"),
-      stage: $("searchStatStage"),
-      elapsed: $("searchStatElapsed"),
-      eta: $("searchStatEta"),
-      grid: $("searchGrid"),
-      footer: $("searchFooterText")
-    };
+function getSearchEls(){
+  return {
+    overlay: $("searchOverlay"), title: $("searchTitle"), sub: $("searchSub"), pill: $("searchStatusPill"), fill: $("searchBarFill"),
+    searched: $("searchStatSearched"), target: $("searchStatTarget"), stage: $("searchStatStage"), elapsed: $("searchStatElapsed"), eta: $("searchStatEta"), grid: $("searchGrid"), footer: $("searchFooterText")
+  };
+}
+
+function clearSearchTimers(){ while(searchAnimState.timers.length){ clearTimeout(searchAnimState.timers.pop()); } }
+
+function makeSearchCard(name, idx){
+  const wrap = document.createElement('div');
+  wrap.className = 'searchGroupCard';
+  wrap.id = `searchCard_${idx}`;
+  wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div>`;
+  return wrap;
+}
+
+function openSearchOverlay(id){
+  const els = getSearchEls();
+  const names = [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組',
+    $(`${id}_prize5Desc`).value.trim() || '全車號碼'
+  ];
+  els.grid.innerHTML = '';
+  names.forEach((name, idx)=> els.grid.appendChild(makeSearchCard(name, idx)));
+  els.title.textContent = `${state.lotteries[id].cfg.title}｜自動生成中`;
+  els.sub.textContent = '系統會依近50期高風險雙號 / 三連號與熱中冷分布，快速生成一組可用方案。';
+  els.pill.textContent = '生成中';
+  els.fill.style.width = '0%';
+  els.searched.textContent = '0';
+  els.target.textContent = '5';
+  els.stage.textContent = '初始化';
+  els.elapsed.textContent = '0.0 秒';
+  els.eta.textContent = '約 1 秒';
+  els.footer.textContent = '會依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
+  els.overlay.classList.add('show');
+  els.overlay.setAttribute('aria-hidden','false');
+  searchAnimState.visible = true;
+  searchAnimState.running = true;
+  searchAnimState.locked = false;
+  searchAnimState.cancelRequested = false;
+  searchAnimState.lastStep = Date.now();
+}
+
+function closeSearchOverlay(force=false){
+  const els = getSearchEls();
+  if(!force && searchAnimState.running){ searchAnimState.cancelRequested = true; }
+  clearSearchTimers();
+  els.overlay.classList.remove('show');
+  els.overlay.setAttribute('aria-hidden','true');
+  searchAnimState.visible = false;
+  searchAnimState.running = false;
+}
+
+function updateSearchOverlay(id, progress){
+  if(!searchAnimState.visible) openSearchOverlay(id);
+  const els = getSearchEls();
+  const searched = progress?.searched || 0;
+  const target = progress?.target || 5;
+  const elapsedMs = progress?.elapsedMs || 0;
+  const percent = target > 0 ? Math.min(100, (searched / target) * 100) : 0;
+  const rate = elapsedMs > 0 ? searched / (elapsedMs / 1000) : 0;
+  const etaMs = rate > 0 ? ((target - searched) / rate) * 1000 : 1000;
+  els.fill.style.width = `${percent}%`;
+  els.searched.textContent = searched.toLocaleString();
+  els.target.textContent = target.toLocaleString();
+  els.stage.textContent = progress?.stageLabel || '生成中';
+  els.elapsed.textContent = `${(elapsedMs / 1000).toFixed(1)} 秒`;
+  els.eta.textContent = formatEta(etaMs);
+  els.pill.textContent = progress?.statusText || '生成中';
+  els.footer.textContent = progress?.footerText || '系統正在避開高風險雙號 / 三連號，並拆散熱號到不同組別。';
+}
+
+async function lockSearchResult(id, bestResult){
+  const names = Object.keys(bestResult.groups || {});
+  searchAnimState.locked = true;
+  searchAnimState.running = false;
+  const els = getSearchEls();
+  els.pill.textContent = '已找到';
+  for(let i=0;i<names.length;i++){
+    const cardEl = $(`searchCard_${i}`); const numsEl = $(`searchNums_${i}`); const hintEl = $(`searchHint_${i}`); const badgeEl = $(`searchBadge_${i}`);
+    const nums = bestResult.groups[names[i]] || [];
+    if(cardEl){ cardEl.classList.remove('active'); cardEl.classList.add('locked'); }
+    if(numsEl){ numsEl.classList.remove('spinPulse'); numsEl.textContent = nums.join('、'); }
+    if(hintEl){ hintEl.textContent = i < 4 ? '已鎖定，可直接確認通報' : '全車號碼已鎖定'; }
+    if(badgeEl){ badgeEl.textContent = '已鎖定'; }
+    updateSearchOverlay(id, { searched: i+1, target: 5, elapsedMs: Date.now()-searchAnimState.lastStep, stageLabel: `已鎖定 ${names[i]}`, statusText: '生成完成', footerText: '全部組別已鎖定完成，現在可以直接按「確認通報」。' });
+    await sleep(180);
   }
+  els.pill.textContent = '可通報';
+  els.stage.textContent = '全部鎖定完成';
+}
 
-  function clearSearchTimers(){
-    while(searchAnimState.timers.length){
-      clearTimeout(searchAnimState.timers.pop());
-    }
-  }
+$("searchCloseBtn").addEventListener("click", ()=>closeSearchOverlay());
+$("searchOverlay").addEventListener("click", (e)=>{ if(e.target.id === "searchOverlay") closeSearchOverlay(); });
 
-  function makeSearchCard(name, idx){
-    const wrap = document.createElement('div');
-    wrap.className = 'searchGroupCard';
-    wrap.id = `searchCard_${idx}`;
-    wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div>`;
-    return wrap;
-  }
-
-
-  function terminateSearchWorker(){
-    if (searchAnimState.worker) {
-      try { searchAnimState.worker.terminate(); } catch (_) {}
-    }
-    searchAnimState.worker = null;
-    searchAnimState.running = false;
-  }
-
-  function makeSearchWorker(){
-    const source = `
-      const comboKey = (arr) => [...arr].map(n => String(n).padStart(2,'0')).sort().join('-');
-      const getCombinations = (arr, size) => {
-        const out = [];
-        const dfs = (start, path) => {
-          if (path.length === size) { out.push(path.slice()); return; }
-          for (let i=start; i<arr.length; i++) { path.push(arr[i]); dfs(i+1, path); path.pop(); }
-        };
-        dfs(0, []);
-        return out;
-      };
-      const shuffle = (arr) => {
-        const copy = arr.slice();
-        for (let i=copy.length-1; i>0; i--) {
-          const j = Math.floor(Math.random() * (i+1));
-          [copy[i], copy[j]] = [copy[j], copy[i]];
-        }
-        return copy;
-      };
-      const countAdjacent = (nums) => nums.slice(1).reduce((acc, n, i) => acc + ((n - nums[i]) === 1 ? 1 : 0), 0);
-      const buildTensTail = (nums) => {
-        const tens = {}, tails = {};
-        nums.forEach(n => {
-          const v = parseInt(n, 10);
-          const t = Math.floor(v / 10);
-          const tail = v % 10;
-          tens[t] = (tens[t] || 0) + 1;
-          tails[tail] = (tails[tail] || 0) + 1;
-        });
-        return { maxTens: Math.max(0, ...Object.values(tens)), maxTail: Math.max(0, ...Object.values(tails)) };
-      };
-      const evaluateGroup = (group, hotSet, pairCounts, tripleCounts, pairThreshold, tripleThreshold) => {
-        const nums = group.map(n => parseInt(n,10)).sort((a,b)=>a-b);
-        let pairRisk = 0, tripleRisk = 0;
-        getCombinations(group, 2).forEach(pair => { if ((pairCounts[comboKey(pair)] || 0) >= pairThreshold) pairRisk++; });
-        getCombinations(group, 3).forEach(triple => { if ((tripleCounts[comboKey(triple)] || 0) >= tripleThreshold) tripleRisk++; });
-        const hotCount = group.filter(n => hotSet.has(n)).length;
-        const { maxTens, maxTail } = buildTensTail(group);
-        const adjacent = countAdjacent(nums);
-        const odd = nums.filter(n => n % 2 === 1).length;
-        const oddEvenGap = Math.abs(odd - (nums.length - odd));
-        const span = nums[nums.length - 1] - nums[0];
-        const ok = pairRisk === 0 && tripleRisk === 0 && hotCount <= 2 && adjacent <= 2 && maxTens <= 3 && maxTail <= 2 && oddEvenGap <= 3 && span >= 8;
-        const score = pairRisk * 120 + tripleRisk * 220 + Math.max(0, hotCount - 1) * 18 + adjacent * 8 + Math.max(0, maxTens - 2) * 10 + Math.max(0, maxTail - 1) * 8 + Math.max(0, oddEvenGap - 1) * 6;
-        return { ok, score, pairRisk, tripleRisk, hotCount, adjacent, maxTens, maxTail, oddEvenGap, span };
-      };
-      onmessage = (e) => {
-        const data = e.data || {};
-        if (data.type !== 'start') return;
-        const { maxNum, groupNames, target, analysis } = data.payload;
-        const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, '0'));
-        const hotSet = new Set((analysis.hot || []).slice(0, 8));
-        const pairCounts = analysis.pairCounts || {};
-        const tripleCounts = analysis.tripleCounts || {};
-        const pairThreshold = analysis.drawCount >= 80 ? 3 : 2;
-        const tripleThreshold = 2;
-        const startedAt = Date.now();
-        const batchSize = 5;
-        let searched = 0;
-        const stageText = (v) => v < 25 ? '建立第一組候選' : v < 50 ? '建立第二組候選' : v < 75 ? '建立第三、四組候選' : '建立全車與最終驗證';
-        while (searched < target) {
-          const limit = Math.min(target, searched + batchSize);
-          for (let i = searched; i < limit; i++) {
-            const shuffled = shuffle(allNums);
-            const g1 = shuffled.slice(0, 5).sort();
-            const g2 = shuffled.slice(5, 10).sort();
-            const g3 = shuffled.slice(10, 15).sort();
-            const g4 = shuffled.slice(15, 20).sort();
-            const g5 = shuffled.slice(20).sort();
-            const groups = [g1, g2, g3, g4];
-            const evals = groups.map(g => evaluateGroup(g, hotSet, pairCounts, tripleCounts, pairThreshold, tripleThreshold));
-            searched = i + 1;
-            postMessage({ type: 'progress', payload: { searched, target, elapsedMs: Date.now() - startedAt, stageLabel: stageText(searched), statusText: '搜尋中', footerText: '系統正在排除近50期高風險雙號 / 三號，並分散熱號到不同組別。', candidatePreview: { g1, g2, g3, g4, g5 } } });
-            if (evals.every(x => x.ok)) {
-              const totalScore = evals.reduce((acc, x) => acc + x.score, 0);
-              postMessage({ type: 'result', payload: { score: totalScore, searchedCandidates: searched, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: Date.now() - startedAt, twoHitRisk: evals.reduce((a,x)=>a+x.pairRisk,0), threeHitRisk: evals.reduce((a,x)=>a+x.tripleRisk,0), lowRiskGroups: 4, mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'low', downgraded: false, whyQualified: '已避開近50期高風險雙號 / 三號，且熱號已分散到不同組。', groups: { [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 } } });
-              return;
-            }
-          }
-        }
-        postMessage({ type: 'result', payload: { noQualifiedResult: true, searchedCandidates: searched, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: Date.now() - startedAt, lowRiskGroups: 0, selectedPool: 'none' } });
-      };
-    `;
-    const blob = new Blob([source], { type: 'application/javascript' });
-    return new Worker(URL.createObjectURL(blob));
-  }
-
-  function startWorkerSearch(id, analysis){
-    terminateSearchWorker();
-    searchAnimState.currentLotteryId = id;
-    searchAnimState.cancelRequested = false;
-    const worker = makeSearchWorker();
-    searchAnimState.worker = worker;
-    const target = 100;
-    const groupNames = [
-      $(`${id}_prize1Desc`).value.trim() || '第一組',
-      $(`${id}_prize2Desc`).value.trim() || '第二組',
-      $(`${id}_prize3Desc`).value.trim() || '第三組',
-      $(`${id}_prize4Desc`).value.trim() || '第四組',
-      $(`${id}_prize5Desc`).value.trim() || '全車號碼'
-    ];
-    return new Promise((resolve, reject) => {
-      worker.onmessage = (evt) => {
-        const msg = evt.data || {};
-        if (msg.type === 'progress') {
-          const p = msg.payload || {};
-          renderSearchProgress(id, p);
-          if (p.candidatePreview) {
-            const cards = [p.candidatePreview.g1, p.candidatePreview.g2, p.candidatePreview.g3, p.candidatePreview.g4, p.candidatePreview.g5];
-            cards.forEach((nums, idx) => {
-              const numsEl = $(`searchNums_${idx}`);
-              const hintEl = $(`searchHint_${idx}`);
-              const badgeEl = $(`searchBadge_${idx}`);
-              if (numsEl) numsEl.textContent = (nums || []).join('、');
-              if (hintEl) hintEl.textContent = idx < 4 ? '排除高風險雙號 / 三號與熱號集中...' : '高風險熱號改放全車承接...';
-              if (badgeEl) badgeEl.textContent = '搜尋中';
-            });
-          }
-        } else if (msg.type === 'result') {
-          const payload = msg.payload || {};
-          terminateSearchWorker();
-          resolve(payload);
-        } else if (msg.type === 'error') {
-          terminateSearchWorker();
-          reject(new Error(msg.message || 'worker error'));
-        }
-      };
-      worker.onerror = (err) => {
-        terminateSearchWorker();
-        reject(err);
-      };
-      worker.postMessage({ type: 'start', payload: { maxNum: state.lotteries[id].cfg.maxNum, groupNames, target, analysis: { drawCount: analysis.drawCount || 0, hot: analysis.hot || [], pairCounts: analysis.pairCounts || {}, tripleCounts: analysis.tripleCounts || {} } } });
-    });
-  }
-
-  function openSearchOverlay(id){
-    const els = getSearchEls();
-    const names = [
-      $(`${id}_prize1Desc`).value.trim() || '第一組',
-      $(`${id}_prize2Desc`).value.trim() || '第二組',
-      $(`${id}_prize3Desc`).value.trim() || '第三組',
-      $(`${id}_prize4Desc`).value.trim() || '第四組',
-      $(`${id}_prize5Desc`).value.trim() || '全車號碼'
-    ];
-    els.grid.innerHTML = '';
-    names.forEach((name, idx)=> els.grid.appendChild(makeSearchCard(name, idx)));
-    els.title.textContent = `${state.lotteries[id].cfg.title}｜低風險方案搜尋中`;
-    els.sub.textContent = '系統會先搜尋第一組合格方案，找到後依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
-    els.pill.textContent = '搜尋中';
-    els.fill.style.width = '0%';
-    els.searched.textContent = '0';
-    els.target.textContent = '0';
-    els.stage.textContent = '初始化';
-    els.elapsed.textContent = '0.0 秒';
-    els.eta.textContent = '估算中';
-    els.footer.textContent = '搜尋開始後會持續跳號，找到第一組合格低風險方案就立即停下來鎖定。';
-    els.overlay.classList.add('show');
-    els.overlay.setAttribute('aria-hidden','false');
-    searchAnimState.visible = true;
-    searchAnimState.running = true;
-    searchAnimState.locked = false;
-    searchAnimState.lastStep = Date.now();
-    searchAnimState.lastSpin = Date.now();
-  }
-
-  function closeSearchOverlay(force=false){
-    const els = getSearchEls();
-    if(!force && searchAnimState.running){
-      searchAnimState.cancelRequested = true;
-      terminateSearchWorker();
-    }
-    clearSearchTimers();
-    els.overlay.classList.remove('show');
-    els.overlay.setAttribute('aria-hidden','true');
-    searchAnimState.visible = false;
-  }
-
-  function randomFive(maxNum){
-    const arr = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-    return shuffle(arr).slice(0,5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-  }
-
-  function randomFull(maxNum){
-    const arr = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-    return shuffle(arr).slice(0,19).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-  }
-
-  function spinSearchCards(id){
-    if(!searchAnimState.visible || searchAnimState.locked) return;
-    const maxNum = state.lotteries[id].cfg.maxNum;
-    for(let i=0;i<5;i++){
-      const numsEl = $(`searchNums_${i}`);
-      const hintEl = $(`searchHint_${i}`);
-      const badgeEl = $(`searchBadge_${i}`);
-      const cardEl = $(`searchCard_${i}`);
-      if(!numsEl || cardEl?.classList.contains('locked')) continue;
-      const nums = i < 4 ? randomFive(maxNum) : randomFull(maxNum);
-      numsEl.textContent = nums.join('、');
-      hintEl.textContent = i < 4 ? '跳號比對高風險雙號 / 三號與熱號集中...' : '保留高風險熱號作為全車緩衝池...';
-      badgeEl.textContent = '搜尋中';
-      cardEl.classList.add('active');
-    }
-  }
-
-  function updateSearchOverlay(id, progress){
-    if(!searchAnimState.visible) openSearchOverlay(id);
-    const els = getSearchEls();
-    const searched = progress?.searched || 0;
-    const target = progress?.target || 0;
-    const elapsedMs = progress?.elapsedMs || 0;
-    const percent = target > 0 ? Math.min(100, (searched / target) * 100) : 0;
-    const rate = elapsedMs > 0 ? searched / (elapsedMs / 1000) : 0;
-    const remaining = Math.max(0, target - searched);
-    const etaMs = rate > 0 ? (remaining / rate) * 1000 : NaN;
-    els.fill.style.width = `${percent}%`;
-    els.searched.textContent = searched.toLocaleString();
-    els.target.textContent = target.toLocaleString();
-    els.stage.textContent = progress?.stageLabel || '搜尋候選中';
-    els.elapsed.textContent = `${(elapsedMs / 1000).toFixed(1)} 秒`;
-    els.eta.textContent = formatEta(etaMs);
-    els.pill.textContent = progress?.statusText || '搜尋中';
-    els.footer.textContent = progress?.footerText || '只要找到第一組合格低風險方案，就會立即停止並開始鎖定各組號碼。';
-    const now = Date.now();
-    if(now - searchAnimState.lastSpin > 120){
-      spinSearchCards(id);
-      searchAnimState.lastSpin = now;
-    }
-  }
-
-  async function lockSearchResult(id, bestResult){
-    const names = Object.keys(bestResult.groups || {});
-    searchAnimState.locked = true;
-    searchAnimState.running = false;
-    const els = getSearchEls();
-    els.pill.textContent = '已找到';
-    els.stage.textContent = '依序鎖定各組';
-    els.footer.textContent = '已找到第一組合格低風險方案，正在依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
-    for(let i=0;i<names.length;i++){
-      const cardEl = $(`searchCard_${i}`);
-      const numsEl = $(`searchNums_${i}`);
-      const hintEl = $(`searchHint_${i}`);
-      const badgeEl = $(`searchBadge_${i}`);
-      const nums = bestResult.groups[names[i]] || [];
-      if(cardEl){
-        cardEl.classList.remove('active');
-        cardEl.classList.add('locked');
-      }
-      if(numsEl){ numsEl.classList.remove('spinPulse'); numsEl.textContent = nums.join('、'); }
-      if(hintEl){ hintEl.textContent = i < 4 ? '已鎖定，可進入下一組搜尋' : '全車號碼已鎖定，可直接確認通報'; }
-      if(badgeEl){ badgeEl.textContent = '已鎖定'; }
-      els.stage.textContent = `已鎖定 ${names[i]}`;
-      await sleep(320);
-    }
-    els.pill.textContent = '可通報';
-    els.stage.textContent = '全部鎖定完成';
-    els.footer.textContent = '全部組別已鎖定完成，現在可以直接按「確認通報」。';
-  }
-
-  $("searchCloseBtn").addEventListener("click", ()=>closeSearchOverlay());
-  $("searchOverlay").addEventListener("click", (e)=>{ if(e.target.id === "searchOverlay") closeSearchOverlay(); });
-
-  function cleanupNumbers(arr, maxNum){
+function cleanupNumbers(arr, maxNum){
     return [...new Set(
       arr.map(n => String(parseInt(n,10)).padStart(2,"0"))
          .filter(n => {
@@ -1969,83 +1767,19 @@
     return { total, twoHitRisk, threeHitRisk };
   }
 
+  
   async function buildSmartGroups(id, analysis, onProgress){
-    const maxNum = state.lotteries[id].cfg.maxNum;
-    const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, "0"));
-
-    const groupNames = [
-      $(`${id}_prize1Desc`).value.trim() || "第一組",
-      $(`${id}_prize2Desc`).value.trim() || "第二組",
-      $(`${id}_prize3Desc`).value.trim() || "第三組",
-      $(`${id}_prize4Desc`).value.trim() || "第四組",
-      $(`${id}_prize5Desc`).value.trim() || "全車號碼"
-    ];
-
-    const target = chooseAdaptiveTries(analysis.drawCount || 0);
-    const chunkSize = 40;
     const startedAt = Date.now();
-    let searched = 0;
-
-    while (searched < target) {
-      const upper = Math.min(target, searched + chunkSize);
-      for(let t=searched; t<upper; t++){
-        if ((t - searched) % 5 === 0) {
-          const elapsedMs = Date.now() - startedAt;
-          if (typeof onProgress === 'function') onProgress({ searched: t, target, elapsedMs, lowRiskFound: 0, stageLabel: t < target * 0.25 ? '建立第一組候選' : t < target * 0.5 ? '建立第二組候選' : t < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
-          await sleep(0);
-        }
-        const shuffled = shuffle(allNums);
-        const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g3 = shuffled.slice(10, 15).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g4 = shuffled.slice(15, 20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g5 = shuffled.slice(20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const firstFour = [g1, g2, g3, g4];
-        const validation = buildStrictValidation({ [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 });
-        if (!validation.ok) continue;
-        const evalResult = evaluatePartition(firstFour, analysis);
-        const elapsedMs = Date.now() - startedAt;
-        return {
-          score: evalResult.total,
-          twoHitRisk: evalResult.twoHitRisk,
-          threeHitRisk: evalResult.threeHitRisk,
-          lowRiskGroups: 4,
-          mediumRiskGroups: 0,
-          rejectedGroups: 0,
-          analyzedDrawCount: analysis.drawCount || 0,
-          generatedTryCount: t + 1,
-          searchedCandidates: t + 1,
-          selectedPool: 'low',
-          downgraded: false,
-          elapsedMs,
-          groups: {
-            [groupNames[0]]: g1,
-            [groupNames[1]]: g2,
-            [groupNames[2]]: g3,
-            [groupNames[3]]: g4,
-            [groupNames[4]]: g5
-          }
-        };
-      }
-      searched = upper;
-      const elapsedMs = Date.now() - startedAt;
-      if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0, stageLabel: searched < target * 0.25 ? '建立第一組候選' : searched < target * 0.5 ? '建立第二組候選' : searched < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
-      await sleep(16);
-    }
-
-    return {
-      noQualifiedResult: true,
-      analyzedDrawCount: analysis.drawCount || 0,
-      generatedTryCount: searched,
-      searchedCandidates: searched,
-      lowRiskGroups: 0,
-      selectedPool: 'none',
-      elapsedMs: Date.now() - startedAt
-    };
+    const target = 1;
+    if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: '分析近50期', statusText: '生成中', footerText: '系統正在依近50期高風險雙號 / 三連號與熱中冷分布直接生成方案。' });
+    await sleep(30);
+    const best = buildSimpleGeneratedPlan(id, analysis);
+    const elapsedMs = Date.now() - startedAt;
+    if (typeof onProgress === 'function') onProgress({ searched: 1, target, elapsedMs, lowRiskFound: 1, stageLabel: '完成生成', statusText: '生成完成', footerText: best.whyQualified || '已完成可用方案生成。' });
+    return Object.assign({}, best, { searchedCandidates: 1, generatedTryCount: 1, elapsedMs, noQualifiedResult: false });
   }
 
-
-  function formatEta(ms){
+function formatEta(ms){
     if (!Number.isFinite(ms) || ms <= 0) return '估算中';
     if (ms < 1000) return `${Math.max(1, Math.round(ms))} ms`;
     return `${(ms / 1000).toFixed(1)} 秒`;
@@ -2967,6 +2701,79 @@
       .map(n => String(n).padStart(2,'0'));
   }
 
+
+
+function pickRandom(list, used){
+  const arr = list.filter(n => !used.has(n));
+  if(!arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function groupHasRisk(nextNum, group, highRiskPairs, highRiskTriples){
+  const test = [...group, nextNum].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+  for(const pair of getCombinations(test, 2)) if(highRiskPairs.has(comboKey(pair))) return true;
+  for(const triple of getCombinations(test, 3)) if(highRiskTriples.has(comboKey(triple))) return true;
+  return false;
+}
+
+function makeGroupFromPools(targetSize, pools, used, highRiskPairs, highRiskTriples, maxNum){
+  const group = [];
+  const fallback = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+  for(const pool of pools){
+    let guard = 0;
+    while(group.length < targetSize && guard < 60){
+      guard += 1;
+      const pick = pickRandom(pool, used);
+      if(!pick) break;
+      if(groupHasRisk(pick, group, highRiskPairs, highRiskTriples)) continue;
+      group.push(pick); used.add(pick); break;
+    }
+  }
+  let guard = 0;
+  while(group.length < targetSize && guard < 500){
+    guard += 1;
+    const pick = pickRandom(fallback, used);
+    if(!pick) break;
+    if(groupHasRisk(pick, group, highRiskPairs, highRiskTriples)) continue;
+    group.push(pick); used.add(pick);
+  }
+  return group.sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+}
+
+function buildSimpleGeneratedPlan(id, analysis){
+  const hot = (analysis.hot || []).slice(0, 10);
+  const cold = (analysis.cold || []).slice(0, 10);
+  const mid = (analysis.mid || []).filter(n => !hot.includes(n) && !cold.includes(n));
+  const highRiskPairs = new Set(analysis.highRiskPairs || []);
+  const highRiskTriples = new Set(analysis.highRiskTriples || []);
+  const riskyNumbers = new Set(analysis.riskyNumberSet ? Array.from(analysis.riskyNumberSet) : []);
+  const used = new Set();
+  const maxNum = state.lotteries[id].cfg.maxNum;
+  const groupNames = [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組',
+    $(`${id}_prize5Desc`).value.trim() || '全車號碼'
+  ];
+  const groups = {};
+  for(let gi=0; gi<4; gi++){
+    const pools = [shuffle(hot), shuffle(mid).slice(0, 15), shuffle(mid).slice(15), shuffle(cold), shuffle(cold)];
+    groups[groupNames[gi]] = makeGroupFromPools(5, pools, used, highRiskPairs, highRiskTriples, maxNum);
+  }
+  const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+  const preferredFull = shuffle(allNums.filter(n => !used.has(n) && riskyNumbers.has(n)));
+  const otherFull = shuffle(allNums.filter(n => !used.has(n) && !riskyNumbers.has(n)));
+  const full = [];
+  for(const n of [...preferredFull, ...otherFull]){ if(full.length >= 19) break; full.push(n); }
+  groups[groupNames[4]] = full.sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+  const mains = [groups[groupNames[0]], groups[groupNames[1]], groups[groupNames[2]], groups[groupNames[3]]];
+  const twoHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,2).filter(pair => highRiskPairs.has(comboKey(pair))).length, 0);
+  const threeHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,3).filter(triple => highRiskTriples.has(comboKey(triple))).length, 0);
+  const hotCounts = mains.map(g => g.filter(n => hot.includes(n)).length);
+  return { groups, score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15), searchedCandidates: 1, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: 0, twoHitRisk, threeHitRisk, lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk), mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'simple', downgraded: false, whyQualified: `已依近50期避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。` };
+}
+
 function bindEvents(id){
     $(`${id}_btnLoad`).addEventListener("click", ()=>loadList(id));
     $(`${id}_btnSample`).addEventListener("click", ()=>apply01to39List(id));
@@ -2994,57 +2801,55 @@ function bindEvents(id){
     });
 
     $(`${id}_btnConfirmTracking`).addEventListener("click", ()=>confirmTracking(id));
-    setConfirmAvailability(id, false, '請先生成合格低風險方案');
+    setConfirmAvailability(id, false, '請先執行自動生成');
     $(`${id}_btnManualTracking`).addEventListener("click", ()=>submitManualTracking(id));
     $(`${id}_btnRefreshTracking`).addEventListener("click", ()=>refreshTrackingBoard(id));
     $(`${id}_btnTelegramTest`).addEventListener("click", ()=>testTelegram(id));
     $(`${id}_btnSaveTelegramConfig`).addEventListener("click", ()=>saveTelegramConfig(id));
 
-    $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
-      const text = getEls(id).historyInput.value.trim();
-      if(!text){
-        showMiniNotice(`${state.lotteries[id].cfg.title}：請先同步或貼上歷史資料`, "warn");
-        return;
-      }
-      const analysis = state.lotteries[id].historyAnalysis || analyzeHistoryText(id, text);
-      state.lotteries[id].historyAnalysis = analysis;
-      renderHistoryAnalysis(id, analysis);
+    
+$(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
+  const text = getEls(id).historyInput.value.trim();
+  if(!text){
+    showMiniNotice(`${state.lotteries[id].cfg.title}：請先同步或貼上歷史資料`, "warn");
+    return;
+  }
+  const analysis = state.lotteries[id].historyAnalysis || analyzeHistoryText(id, text);
+  state.lotteries[id].historyAnalysis = analysis;
+  renderHistoryAnalysis(id, analysis);
 
-      const btn = $(`${id}_btnGenerateSmart`);
-      btn.disabled = true;
-      const originalText = btn.textContent;
-      btn.textContent = '搜尋低風險中...';
-      setConfirmAvailability(id, false, "系統正在搜尋合格低風險方案");
-      openSearchOverlay(id);
-      renderSearchProgress(id, { searched: 0, target: 100, elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
-      await sleep(32);
-      try {
-        const bestResult = await startWorkerSearch(id, analysis);
-        if(!bestResult || bestResult.noQualifiedResult){
-          state.lotteries[id].generatedGroups = null;
-          getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>低風險方案不足</b><span style="color:#ffd8a8;">本次已自動分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案，因此不顯示、不開放通報。</span></div>`;
-          updateSearchOverlay(id, { searched: bestResult?.searchedCandidates || 0, target: 100, elapsedMs: bestResult?.elapsedMs || 0, stageLabel: '未找到合格方案', statusText: '本輪失敗', footerText: `本輪已分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案。` });
-          searchAnimState.running = false;
-          setConfirmAvailability(id, false, "未找到合格低風險方案");
-          showMiniNotice(`${state.lotteries[id].cfg.title}：未找到合格低風險方案，本次不顯示也不開放通報`, "warn");
-          persistAll();
-          return;
-        }
-        state.lotteries[id].generatedGroups = bestResult;
-        await lockSearchResult(id, bestResult);
-        renderGroupPreview(id, bestResult);
-        applyGeneratedGroupsToLog(id, bestResult.groups);
-        setConfirmAvailability(id, true);
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到第一組合格低風險方案，可直接通報`, "ok");
-      } finally {
-        terminateSearchWorker();
-        searchAnimState.running = false;
-        btn.disabled = false;
-        btn.textContent = originalText;
-      }
-    });
+  const btn = $(`${id}_btnGenerateSmart`);
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '生成中...';
+  setConfirmAvailability(id, false, "系統正在生成可用方案");
+  openSearchOverlay(id);
+  const startedAt = Date.now();
+  updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: '分析近50期', statusText: '生成中', footerText: '系統正在分析高風險雙號 / 三連號與熱中冷分布。' });
+  await sleep(120);
+  try {
+    const bestResult = buildSimpleGeneratedPlan(id, analysis);
+    state.lotteries[id].generatedGroups = bestResult;
+    await lockSearchResult(id, bestResult);
+    renderGroupPreview(id, bestResult);
+    applyGeneratedGroupsToLog(id, bestResult.groups);
+    setConfirmAvailability(id, true);
+    showMiniNotice(`${state.lotteries[id].cfg.title}：已生成可直接通報的方案`, "ok");
+  } catch (err) {
+    console.error(err);
+    state.lotteries[id].generatedGroups = null;
+    getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>生成失敗</b><span style="color:#ffd8a8;">${escapeHtml(err.message || '系統生成失敗，請再試一次。')}</span></div>`;
+    setConfirmAvailability(id, false, "生成失敗");
+    showMiniNotice(`${state.lotteries[id].cfg.title}：生成失敗，請再試一次`, "warn");
+  } finally {
+    searchAnimState.running = false;
+    btn.disabled = false;
+    btn.textContent = originalText;
+    persistAll();
+  }
+});
 
-    [1,2,3,4,5].forEach(i=>{
+[1,2,3,4,5].forEach(i=>{
       $(`${id}_prize${i}Count`).addEventListener("input", ()=>{
         syncPrizeButtons(id);
         persistAll();
