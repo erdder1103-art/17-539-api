@@ -1018,23 +1018,71 @@
     return score;
   }
 
+  function buildGroupStructure(group){
+    const nums = [...group].map(n => parseInt(n, 10)).sort((a,b)=>a-b);
+    const odd = nums.filter(n => n % 2 === 1).length;
+    const even = nums.length - odd;
+    const adjacent = nums.slice(1).reduce((acc, n, idx)=> acc + (n - nums[idx] === 1 ? 1 : 0), 0);
+    const tens = {};
+    nums.forEach(n=>{
+      const bucket = Math.floor(n / 10);
+      tens[bucket] = (tens[bucket] || 0) + 1;
+    });
+    const maxTens = Math.max(...Object.values(tens), 0);
+    const span = nums[nums.length - 1] - nums[0];
+    return {
+      odd,
+      even,
+      adjacent,
+      oddEvenGap: Math.abs(odd - even),
+      maxTens,
+      span,
+      isLowRisk: adjacent <= 1 && maxTens <= 2 && Math.abs(odd - even) <= 1 && span >= 14,
+      isMediumRisk: adjacent <= 2 && maxTens <= 3 && Math.abs(odd - even) <= 3 && span >= 10,
+      shouldReject: adjacent >= 3 || maxTens >= 4 || Math.abs(odd - even) >= 4 || span <= 7
+    };
+  }
+
   function evaluatePartition(groups, analysis){
     let total = 0;
     let twoHitRisk = 0;
     let threeHitRisk = 0;
+    let lowRiskGroups = 0;
+    let mediumRiskGroups = 0;
+    let rejectedGroups = 0;
+    const structuralRisks = [];
 
     groups.forEach(g=>{
       total += scoreSingleGroup(g, analysis);
+      const risk = buildGroupStructure(g);
+      structuralRisks.push(risk);
+      if(risk.isLowRisk) lowRiskGroups += 1;
+      if(!risk.isLowRisk && risk.isMediumRisk) mediumRiskGroups += 1;
+      if(risk.shouldReject) rejectedGroups += 1;
       analysis.draws.forEach(draw=>{
         const hit = intersectionCount(g, draw);
         if(hit === 2) twoHitRisk++;
         if(hit === 3) threeHitRisk++;
       });
+      total += risk.adjacent * 180000;
+      total += Math.max(0, risk.maxTens - 2) * 240000;
+      total += risk.oddEvenGap * 70000;
+      if(risk.span < 12) total += (12 - risk.span) * 40000;
+      if(risk.shouldReject) total += 5000000;
     });
 
     total += twoHitRisk * 1000000;
     total += threeHitRisk * 3000000;
-    return { total, twoHitRisk, threeHitRisk };
+    total -= lowRiskGroups * 120000;
+    return { total, twoHitRisk, threeHitRisk, lowRiskGroups, mediumRiskGroups, rejectedGroups, structuralRisks };
+  }
+
+  function chooseAdaptiveTries(drawCount){
+    if(drawCount >= 200) return 90000;
+    if(drawCount >= 150) return 70000;
+    if(drawCount >= 100) return 50000;
+    if(drawCount >= 50) return 32000;
+    return 22000;
   }
 
   function buildSmartGroups(id, analysis){
@@ -1049,8 +1097,10 @@
       $(`${id}_prize5Desc`).value.trim() || "全車號碼"
     ];
 
-    let best = null;
-    const tries = 18000;
+    let bestLowRisk = null;
+    let bestMediumRisk = null;
+    let bestFallback = null;
+    const tries = chooseAdaptiveTries(analysis.drawCount || 0);
 
     for(let t=0;t<tries;t++){
       const shuffled = shuffle(allNums);
@@ -1063,28 +1113,41 @@
 
       const firstFour = [g1, g2, g3, g4];
       const evalResult = evaluatePartition(firstFour, analysis);
+      const candidate = {
+        score: evalResult.total,
+        twoHitRisk: evalResult.twoHitRisk,
+        threeHitRisk: evalResult.threeHitRisk,
+        lowRiskGroups: evalResult.lowRiskGroups,
+        mediumRiskGroups: evalResult.mediumRiskGroups,
+        rejectedGroups: evalResult.rejectedGroups,
+        analyzedDrawCount: analysis.drawCount || 0,
+        generatedTryCount: tries,
+        groups: {
+          [groupNames[0]]: g1,
+          [groupNames[1]]: g2,
+          [groupNames[2]]: g3,
+          [groupNames[3]]: g4,
+          [groupNames[4]]: g5
+        }
+      };
 
-      if(!best || evalResult.total < best.score){
-        best = {
-          score: evalResult.total,
-          twoHitRisk: evalResult.twoHitRisk,
-          threeHitRisk: evalResult.threeHitRisk,
-          groups: {
-            [groupNames[0]]: g1,
-            [groupNames[1]]: g2,
-            [groupNames[2]]: g3,
-            [groupNames[3]]: g4,
-            [groupNames[4]]: g5
-          }
-        };
-
-        if(best.twoHitRisk === 0 && best.threeHitRisk === 0 && t > 3000){
+      if(candidate.rejectedGroups === 0 && candidate.lowRiskGroups === 4){
+        if(!bestLowRisk || candidate.score < bestLowRisk.score) bestLowRisk = candidate;
+        if(bestLowRisk && bestLowRisk.twoHitRisk === 0 && bestLowRisk.threeHitRisk === 0 && t > Math.min(12000, Math.floor(tries * 0.35))){
           break;
         }
+        continue;
       }
+
+      if(candidate.rejectedGroups === 0 && candidate.lowRiskGroups >= 2){
+        if(!bestMediumRisk || candidate.score < bestMediumRisk.score) bestMediumRisk = candidate;
+        continue;
+      }
+
+      if(!bestFallback || candidate.score < bestFallback.score) bestFallback = candidate;
     }
 
-    return best;
+    return bestLowRisk || bestMediumRisk || bestFallback;
   }
 
   function renderGroupPreview(id, bestResult){
@@ -1112,7 +1175,7 @@
 
     const row = document.createElement("div");
     row.className = "groupRow";
-    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk}</span>`;
+    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk} ｜ 低風險組數：${bestResult.lowRiskGroups || 0}/4 ｜ 分析期數：${bestResult.analyzedDrawCount || 0} ｜ 搜索候選：${bestResult.generatedTryCount || 0}</span>`;
     box.appendChild(row);
   }
 
@@ -2022,9 +2085,9 @@ function bindEvents(id){
       applyGeneratedGroupsToLog(id, bestResult.groups);
 
       if(bestResult.twoHitRisk === 0 && bestResult.threeHitRisk === 0){
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到歷史上 2 顆 / 3 顆碰撞都為 0 的分組`, "ok");
+        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到低風險優先分組，歷史 2 顆 / 3 顆碰撞都為 0`, "ok");
       }else{
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已生成目前最佳方案，2碰撞=${bestResult.twoHitRisk}，3碰撞=${bestResult.threeHitRisk}`, "info");
+        showMiniNotice(`${state.lotteries[id].cfg.title}：已生成低風險優先方案，2碰撞=${bestResult.twoHitRisk}，3碰撞=${bestResult.threeHitRisk}，低風險組數=${bestResult.lowRiskGroups || 0}/4`, "info");
       }
     });
 
