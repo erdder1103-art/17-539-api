@@ -1280,13 +1280,18 @@
     ];
 
     const target = chooseAdaptiveTries(analysis.drawCount || 0);
-    const chunkSize = 800;
+    const chunkSize = 40;
     const startedAt = Date.now();
     let searched = 0;
 
     while (searched < target) {
       const upper = Math.min(target, searched + chunkSize);
       for(let t=searched; t<upper; t++){
+        if ((t - searched) % 5 === 0) {
+          const elapsedMs = Date.now() - startedAt;
+          if (typeof onProgress === 'function') onProgress({ searched: t, target, elapsedMs, lowRiskFound: 0, stageLabel: t < target * 0.25 ? '建立第一組候選' : t < target * 0.5 ? '建立第二組候選' : t < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
+          await sleep(0);
+        }
         const shuffled = shuffle(allNums);
         const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
         const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
@@ -1323,7 +1328,7 @@
       searched = upper;
       const elapsedMs = Date.now() - startedAt;
       if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0, stageLabel: searched < target * 0.25 ? '建立第一組候選' : searched < target * 0.5 ? '建立第二組候選' : searched < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
-      await sleep(0);
+      await sleep(16);
     }
 
     return {
@@ -2310,6 +2315,7 @@ function bindEvents(id){
       setConfirmAvailability(id, false, "系統正在搜尋合格低風險方案");
       openSearchOverlay(id);
       renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
+      await sleep(32);
       try {
         const bestResult = await buildSmartGroups(id, analysis, (progress)=>renderSearchProgress(id, progress));
         if(!bestResult || bestResult.noQualifiedResult){
