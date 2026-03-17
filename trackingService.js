@@ -66,6 +66,41 @@ function buildValidationSummary(groups) {
   };
 }
 
+
+function buildSingleGroupRisk(group) {
+  const nums = (group || []).map((n) => Number(n)).filter((n) => Number.isInteger(n)).sort((a, b) => a - b);
+  const odd = nums.filter((n) => n % 2 === 1).length;
+  const even = nums.length - odd;
+  const tens = {};
+  const tails = {};
+  let adjacent = 0;
+  for (let i = 0; i < nums.length; i += 1) {
+    const n = nums[i];
+    const tensBucket = Math.floor(n / 10);
+    const tailBucket = n % 10;
+    tens[tensBucket] = (tens[tensBucket] || 0) + 1;
+    tails[tailBucket] = (tails[tailBucket] || 0) + 1;
+    if (i > 0 && nums[i] - nums[i - 1] === 1) adjacent += 1;
+  }
+  const maxTens = Math.max(0, ...Object.values(tens));
+  const maxTail = Math.max(0, ...Object.values(tails));
+  const span = nums.length ? nums[nums.length - 1] - nums[0] : 0;
+  const oddEvenGap = Math.abs(odd - even);
+  const isLowRisk = adjacent <= 1 && maxTens <= 2 && maxTail <= 1 && oddEvenGap <= 1 && span >= 14;
+  return { adjacent, maxTens, maxTail, span, oddEvenGap, isLowRisk };
+}
+
+function validateStrictLowRiskSystemGroups(groups) {
+  const mainGroups = [groups.group1, groups.group2, groups.group3, groups.group4];
+  const risks = mainGroups.map(buildSingleGroupRisk);
+  const badIndex = risks.findIndex((r) => !r.isLowRisk);
+  if (badIndex !== -1) {
+    const r = risks[badIndex];
+    throw new Error(`系統生成未通過嚴格低風險驗證：第${badIndex + 1}組不合格（連號:${r.adjacent}、十位集中:${r.maxTens}、尾數集中:${r.maxTail}、奇偶差:${r.oddEvenGap}、跨度:${r.span}）`);
+  }
+  return { lowRiskGroupCount: 4, risks };
+}
+
 function defaultSystemSource(payload) {
   return String(payload.sourceName || payload.source || '').trim() || '防2/3碰撞追蹤';
 }
@@ -74,6 +109,7 @@ function validatePayload(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
   const groups = normalizeGroups(payload.groups || {});
   ensureMainGroupsUnique(groups);
+  validateStrictLowRiskSystemGroups(groups);
 
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
   return {

@@ -405,9 +405,15 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   const retryRate = Math.max(0.08, Math.min(0.5, 1 - tendency - severeRisk));
   const reliability = Math.max(38, Math.min(88, 42 + Math.min(total, 50) * 0.45 + Math.min(Math.abs(score), 15)));
   let riskLevel = '中';
-  if (features.lowRiskGroupCount === 4 && features.rejectedGroupCount === 0 && features.maxGroupAdjacent <= 1 && features.maxGroupTailCount <= 1 && features.maxGroupTensCount <= 2 && tendency >= 0.5) {
+  const isStrictLowRisk = features.lowRiskGroupCount === 4
+    && features.rejectedGroupCount === 0
+    && features.maxGroupAdjacent <= 1
+    && features.maxGroupTailCount <= 1
+    && features.maxGroupTensCount <= 2;
+
+  if (isStrictLowRisk) {
     riskLevel = '低';
-  } else if (features.rejectedGroupCount > 0 || severeRisk >= 0.24 || tendency < 0.5) {
+  } else if (features.rejectedGroupCount > 0 || features.lowRiskGroupCount <= 2 || severeRisk >= 0.24) {
     riskLevel = '高';
   }
 
