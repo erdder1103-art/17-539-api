@@ -2390,12 +2390,7 @@ function buildSimpleGeneratedPlan(id, analysis){
       twoHitRisk,
       threeHitRisk,
       hotNumbers: hot,
-      midNumbers: mid.slice(0, 20),
       coldNumbers: cold,
-      riskyNumbers: Array.from(riskyNumbers),
-      highRiskPairs: Array.from(highRiskPairs),
-      highRiskTriples: Array.from(highRiskTriples),
-      groupHotCounts: hotCounts,
       riskGroupDetails
     }
   };
