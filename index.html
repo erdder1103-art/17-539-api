@@ -1585,7 +1585,7 @@
     return { total, twoHitRisk, threeHitRisk };
   }
 
-  function buildSmartGroups(id, analysis){
+  async function buildSmartGroups(id, analysis){
     const maxNum = state.lotteries[id].cfg.maxNum;
     const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, "0"));
 
@@ -1597,26 +1597,35 @@
       $(`${id}_prize5Desc`).value.trim() || "全車號碼"
     ];
 
-    let best = null;
-    const tries = 18000;
+    const plan = getEscalatingTryPlan(analysis.drawCount || 0);
+    let cumulative = 0;
+    let bestLowRisk = null;
 
-    for(let t=0;t<tries;t++){
-      const shuffled = shuffle(allNums);
-
-      const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-      const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-      const g3 = shuffled.slice(10, 15).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-      const g4 = shuffled.slice(15, 20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-      const g5 = shuffled.slice(20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-
-      const firstFour = [g1, g2, g3, g4];
-      const evalResult = evaluatePartition(firstFour, analysis);
-
-      if(!best || evalResult.total < best.score){
-        best = {
+    for (const tries of plan) {
+      const batch = Math.max(0, tries - cumulative);
+      for(let t=0; t<batch; t++){
+        const shuffled = shuffle(allNums);
+        const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        const g3 = shuffled.slice(10, 15).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        const g4 = shuffled.slice(15, 20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        const g5 = shuffled.slice(20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        const firstFour = [g1, g2, g3, g4];
+        const validation = buildStrictValidation({ [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 });
+        if (!validation.ok) continue;
+        const evalResult = evaluatePartition(firstFour, analysis);
+        const candidate = {
           score: evalResult.total,
           twoHitRisk: evalResult.twoHitRisk,
           threeHitRisk: evalResult.threeHitRisk,
+          lowRiskGroups: 4,
+          mediumRiskGroups: 0,
+          rejectedGroups: 0,
+          analyzedDrawCount: analysis.drawCount || 0,
+          generatedTryCount: tries,
+          searchedCandidates: tries,
+          selectedPool: 'low',
+          downgraded: false,
           groups: {
             [groupNames[0]]: g1,
             [groupNames[1]]: g2,
@@ -1625,15 +1634,23 @@
             [groupNames[4]]: g5
           }
         };
-
-        if(best.twoHitRisk === 0 && best.threeHitRisk === 0 && t > 3000){
-          break;
-        }
+        if(!bestLowRisk || candidate.score < bestLowRisk.score) bestLowRisk = candidate;
       }
+      cumulative = tries;
+      if (bestLowRisk) return bestLowRisk;
+      await sleep(0);
     }
 
-    return best;
+    return {
+      noQualifiedResult: true,
+      analyzedDrawCount: analysis.drawCount || 0,
+      generatedTryCount: cumulative,
+      searchedCandidates: cumulative,
+      lowRiskGroups: 0,
+      selectedPool: 'none'
+    };
   }
+
 
   function renderGroupPreview(id, bestResult){
     const box = getEls(id).groupPreview;
@@ -2240,10 +2257,19 @@
   }
 
 
+  function setConfirmAvailability(id, enabled, reason = ""){
+    const btn = $(`${id}_btnConfirmTracking`);
+    if(!btn) return;
+    btn.disabled = !enabled;
+    btn.title = enabled ? '' : reason;
+    btn.style.opacity = enabled ? '1' : '0.55';
+    btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  }
+
   async function confirmTracking(id){
     const s = state.lotteries[id];
-    if(!s.generatedGroups || !s.generatedGroups.groups){
-      showMiniNotice(`${s.cfg.title}：請先執行「防 2/3 碰撞自動生成」`, "warn");
+    if(!s.generatedGroups || !s.generatedGroups.groups || s.generatedGroups.noQualifiedResult){
+      showMiniNotice(`${s.cfg.title}：目前沒有合格低風險方案，請先執行自動生成搜尋`, "warn");
       return;
     }
 
@@ -2549,12 +2575,13 @@ function bindEvents(id){
     });
 
     $(`${id}_btnConfirmTracking`).addEventListener("click", ()=>confirmTracking(id));
+    setConfirmAvailability(id, false, '請先生成合格低風險方案');
     $(`${id}_btnManualTracking`).addEventListener("click", ()=>submitManualTracking(id));
     $(`${id}_btnRefreshTracking`).addEventListener("click", ()=>refreshTrackingBoard(id));
     $(`${id}_btnTelegramTest`).addEventListener("click", ()=>testTelegram(id));
     $(`${id}_btnSaveTelegramConfig`).addEventListener("click", ()=>saveTelegramConfig(id));
 
-    $(`${id}_btnGenerateSmart`).addEventListener("click", ()=>{
+    $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
       const text = getEls(id).historyInput.value.trim();
       if(!text){
         showMiniNotice(`${state.lotteries[id].cfg.title}：請先同步或貼上歷史資料`, "warn");
