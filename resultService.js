@@ -1,13 +1,23 @@
+const fs = require('fs');
 const { sendTelegramMessage } = require('./telegram');
 const { updateWeeklyStats, buildWeeklySummaryText, getWeekKey } = require('./weekStats');
 const { getActiveTrackings, settleTracking } = require('./trackingStore');
 const { formatTaipeiDateTime } = require('./utils/time');
-
-const { getDataFile, getDataDir, initializeDataFiles, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
+const { getDataFile, getDataDir } = require('./dataPaths');
 
 const RESULT_STATE_FILE = getDataFile('result_state.json');
 const RESULT_HISTORY_FILE = getDataFile('result_history.json');
 const LEARNING_FILE = getDataFile('learning_state.json');
+
+const DEFAULT_LEARNING_BUCKET = {
+  total: 0,
+  labels: {},
+  lessons: {},
+  featureStats: {},
+  samples: [],
+  lastUpdatedAt: '',
+  lastDraw: []
+};
 
 function readJson(file, fallback) {
   try {
@@ -68,29 +78,137 @@ function parseIssue(issueKey) {
   return String(issueKey || '').split('|')[0] || '';
 }
 
-function learnFromOutcome(lotteryType, tracking, draw, resultMap, evaluation) {
-  const store = readJson(LEARNING_FILE, { '539': { system: { total: 0, labels: {}, lessons: {} } }, 'ttl': { system: { total: 0, labels: {}, lessons: {} } } });
-  const key = lotteryType === 'ttl' ? 'ttl' : '539';
-  if (!store[key]) store[key] = { system: { total: 0, labels: {}, lessons: {} } };
-  if (!store[key].system) store[key].system = { total: 0, labels: {}, lessons: {} };
+function getLessonKey(resultMap) {
+  return [
+    `fullHits:${resultMap.full}`,
+    `g1:${resultMap.group1}`,
+    `g2:${resultMap.group2}`,
+    `g3:${resultMap.group3}`,
+    `g4:${resultMap.group4}`
+  ].join('|');
+}
 
+function getMainGroups(groups) {
+  return [groups.group1 || [], groups.group2 || [], groups.group3 || [], groups.group4 || []];
+}
+
+function getAllMainNumbers(groups) {
+  return getMainGroups(groups).flat();
+}
+
+function countAdjacent(nums) {
+  const sorted = [...nums].map(Number).sort((a, b) => a - b);
+  let count = 0;
+  for (let i = 1; i < sorted.length; i += 1) {
+    if (sorted[i] - sorted[i - 1] === 1) count += 1;
+  }
+  return count;
+}
+
+function groupSpan(group) {
+  if (!Array.isArray(group) || !group.length) return 0;
+  const sorted = [...group].map(Number).sort((a, b) => a - b);
+  return sorted[sorted.length - 1] - sorted[0];
+}
+
+function buildFeatureSnapshot(tracking) {
+  const groups = tracking.groups || {};
+  const mainNumbers = getAllMainNumbers(groups).map(Number);
+  const fullNumbers = (groups.full || []).map(Number);
+  const oddCount = mainNumbers.filter(n => n % 2 === 1).length;
+  const evenCount = mainNumbers.length - oddCount;
+  const lowCount = mainNumbers.filter(n => n >= 1 && n <= 13).length;
+  const midCount = mainNumbers.filter(n => n >= 14 && n <= 26).length;
+  const highCount = mainNumbers.filter(n => n >= 27 && n <= 39).length;
+  const tailBuckets = {};
+  const tensBuckets = {};
+  for (const num of mainNumbers) {
+    const tail = String(num % 10);
+    const tens = String(Math.floor(num / 10));
+    tailBuckets[tail] = (tailBuckets[tail] || 0) + 1;
+    tensBuckets[tens] = (tensBuckets[tens] || 0) + 1;
+  }
+  const fullSet = new Set((groups.full || []).map(String));
+  const groupOverlaps = getMainGroups(groups).map((g) => g.filter((n) => fullSet.has(String(n))).length);
+  const spans = getMainGroups(groups).map(groupSpan);
+  const duplicateTails = Object.values(tailBuckets).filter(v => v >= 3).length;
+  const crowdedTens = Object.values(tensBuckets).filter(v => v >= 6).length;
+  const adjacentPairs = countAdjacent(mainNumbers);
+
+  return {
+    oddEvenBalance: `${oddCount}:${evenCount}`,
+    oddCount,
+    evenCount,
+    lowMidHigh: `${lowCount}:${midCount}:${highCount}`,
+    lowCount,
+    midCount,
+    highCount,
+    adjacentPairs,
+    duplicateTails,
+    crowdedTens,
+    tailSpread: Object.keys(tailBuckets).length,
+    tensSpread: Object.keys(tensBuckets).length,
+    maxTailCount: Math.max(0, ...Object.values(tailBuckets)),
+    maxTensCount: Math.max(0, ...Object.values(tensBuckets)),
+    fullCoverage: fullNumbers.length,
+    groupOverlapWithFull: groupOverlaps,
+    spanSummary: spans,
+    avgSpan: spans.length ? Number((spans.reduce((a, b) => a + b, 0) / spans.length).toFixed(2)) : 0,
+    mainUniqueCount: new Set(mainNumbers).size,
+    fullUniqueCount: new Set(fullNumbers).size
+  };
+}
+
+function ensureLearningStore(raw) {
+  const store = raw || {};
+  for (const key of ['539', 'ttl']) {
+    if (!store[key]) store[key] = {};
+    if (!store[key].system) store[key].system = JSON.parse(JSON.stringify(DEFAULT_LEARNING_BUCKET));
+    store[key].system.total = Number(store[key].system.total || 0);
+    store[key].system.labels = store[key].system.labels || {};
+    store[key].system.lessons = store[key].system.lessons || {};
+    store[key].system.featureStats = store[key].system.featureStats || {};
+    store[key].system.samples = Array.isArray(store[key].system.samples) ? store[key].system.samples : [];
+  }
+  return store;
+}
+
+function recordFeatureStats(bucket, features, label) {
+  for (const [name, value] of Object.entries(features)) {
+    const valueKey = Array.isArray(value) ? value.join(',') : String(value);
+    if (!bucket.featureStats[name]) bucket.featureStats[name] = {};
+    if (!bucket.featureStats[name][valueKey]) bucket.featureStats[name][valueKey] = { total: 0, labels: {} };
+    const stat = bucket.featureStats[name][valueKey];
+    stat.total += 1;
+    stat.labels[label] = (stat.labels[label] || 0) + 1;
+  }
+}
+
+function learnFromOutcome(lotteryType, tracking, draw, resultMap, evaluation) {
+  const store = ensureLearningStore(readJson(LEARNING_FILE, {}));
+  const key = lotteryType === 'ttl' ? 'ttl' : '539';
   if (tracking.trackType === 'system') {
-    const lessonKey = [
-      `fullHits:${resultMap.full}`,
-      `g1:${resultMap.group1}`,
-      `g2:${resultMap.group2}`,
-      `g3:${resultMap.group3}`,
-      `g4:${resultMap.group4}`
-    ].join('|');
-    store[key].system.total += 1;
-    store[key].system.labels[evaluation.label] = (store[key].system.labels[evaluation.label] || 0) + 1;
-    if (!store[key].system.lessons[lessonKey]) {
-      store[key].system.lessons[lessonKey] = { total: 0, labels: {} };
+    const bucket = store[key].system;
+    const lessonKey = getLessonKey(resultMap);
+    const features = buildFeatureSnapshot(tracking);
+    bucket.total += 1;
+    bucket.labels[evaluation.label] = (bucket.labels[evaluation.label] || 0) + 1;
+    if (!bucket.lessons[lessonKey]) {
+      bucket.lessons[lessonKey] = { total: 0, labels: {} };
     }
-    store[key].system.lessons[lessonKey].total += 1;
-    store[key].system.lessons[lessonKey].labels[evaluation.label] = (store[key].system.lessons[lessonKey].labels[evaluation.label] || 0) + 1;
-    store[key].system.lastUpdatedAt = nowFull();
-    store[key].system.lastDraw = draw;
+    bucket.lessons[lessonKey].total += 1;
+    bucket.lessons[lessonKey].labels[evaluation.label] = (bucket.lessons[lessonKey].labels[evaluation.label] || 0) + 1;
+    recordFeatureStats(bucket, features, evaluation.label);
+    bucket.samples.push({
+      checkedAt: nowFull(),
+      label: evaluation.label,
+      lessonKey,
+      resultMap,
+      features
+    });
+    bucket.samples = bucket.samples.slice(-200);
+    bucket.lastUpdatedAt = nowFull();
+    bucket.lastDraw = draw;
   }
   writeJson(LEARNING_FILE, store);
 }
@@ -125,6 +243,115 @@ function buildResultMessage(lotteryTitle, issueKey, draw, tracking, resultMap, f
     `結果：${finalLabel}`
   ];
   return lines.join('\n');
+}
+
+function estimateLabelRate(labels = {}, total = 0, label) {
+  if (!total) return 0;
+  return Number((((labels[label] || 0) / total) * 100).toFixed(1));
+}
+
+function buildRecommendationForTracking(lotteryType, tracking, learningState) {
+  const bucket = (learningState && learningState.system) || DEFAULT_LEARNING_BUCKET;
+  const total = Number(bucket.total || 0);
+  const features = buildFeatureSnapshot(tracking);
+  let score = 0;
+  const positives = [];
+  const negatives = [];
+
+  if (features.adjacentPairs <= 2) {
+    score += 6;
+    positives.push('連號偏少');
+  } else {
+    score -= 8;
+    negatives.push('連號偏多');
+  }
+  if (features.maxTailCount <= 3) {
+    score += 6;
+    positives.push('尾數分散');
+  } else {
+    score -= 10;
+    negatives.push('尾數過度集中');
+  }
+  if (features.maxTensCount <= 6) {
+    score += 5;
+    positives.push('十位區分布較平均');
+  } else {
+    score -= 8;
+    negatives.push('十位區過度集中');
+  }
+  if (Math.abs(features.oddCount - features.evenCount) <= 4) {
+    score += 5;
+    positives.push('奇偶平衡');
+  } else {
+    score -= 5;
+    negatives.push('奇偶失衡');
+  }
+  if (features.fullCoverage === 19) {
+    score += 5;
+    positives.push('全車號碼完整');
+  } else {
+    score -= 12;
+    negatives.push('全車號碼不是19顆');
+  }
+
+  for (const [name, value] of Object.entries(features)) {
+    const valueKey = Array.isArray(value) ? value.join(',') : String(value);
+    const stat = bucket.featureStats?.[name]?.[valueKey];
+    if (!stat || !stat.total) continue;
+    const passRate = (stat.labels['恭喜過關'] || 0) / stat.total;
+    const failRate = ((stat.labels['再接再厲'] || 0) + (stat.labels['靠3.3倍'] || 0)) / stat.total;
+    const impact = Math.round((passRate - failRate) * Math.min(stat.total, 8));
+    score += impact;
+    if (impact >= 2) positives.push(`${name}:${valueKey}`);
+    if (impact <= -2) negatives.push(`${name}:${valueKey}`);
+  }
+
+  const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.5;
+  const predictedPass = Math.max(0.05, Math.min(0.95, basePass + score / 200));
+  const predictedRisk = Math.max(0.02, Math.min(0.9, 1 - predictedPass));
+  const severeRatio = total ? (bucket.labels['靠3.3倍'] || 0) / total : 0.18;
+  const severeRisk = Math.max(0.01, Math.min(0.6, severeRatio + Math.max(0, -score) / 250));
+  const retryRate = Math.max(0.01, Math.min(0.9, predictedRisk - severeRisk));
+  const confidence = Math.max(35, Math.min(95, 40 + Math.min(total, 60) * 0.6 + Math.min(Math.abs(score), 20)));
+  const riskLevel = severeRisk >= 0.28 || predictedPass < 0.48 ? '高' : severeRisk >= 0.16 || predictedPass < 0.6 ? '中' : '低';
+
+  return {
+    trackingId: tracking.id || '',
+    trackType: tracking.trackType || 'system',
+    sourceName: tracking.sourceName || '',
+    predictedPassRate: Number((predictedPass * 100).toFixed(1)),
+    predictedRetryRate: Number((retryRate * 100).toFixed(1)),
+    predictedX33Rate: Number((severeRisk * 100).toFixed(1)),
+    riskLevel,
+    confidence: Number(confidence.toFixed(1)),
+    score,
+    positives: positives.slice(0, 4),
+    negatives: negatives.slice(0, 4),
+    features
+  };
+}
+
+function getLearningState(lotteryType) {
+  const key = lotteryType === 'ttl' ? 'ttl' : '539';
+  const store = ensureLearningStore(readJson(LEARNING_FILE, {}));
+  return store[key] || { system: JSON.parse(JSON.stringify(DEFAULT_LEARNING_BUCKET)) };
+}
+
+function getRecommendations(lotteryType) {
+  const key = lotteryType === 'ttl' ? 'ttl' : '539';
+  const active = getActiveTrackings(key);
+  const learning = getLearningState(key);
+  const recommendations = active.map((tracking) => buildRecommendationForTracking(key, tracking, learning));
+  return {
+    ok: true,
+    lotteryType: key,
+    activeCount: active.length,
+    learningSamples: Number(learning.system?.total || 0),
+    recommendations,
+    summary: recommendations.length
+      ? `目前共有 ${recommendations.length} 筆推薦分析`
+      : '目前沒有可分析的待開獎追蹤'
+  };
 }
 
 async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issueKey) {
@@ -198,14 +425,9 @@ function getResultHistory(lotteryType) {
   return readJson(RESULT_HISTORY_FILE, []).filter(x => x.lotteryType === key);
 }
 
-function getLearningState(lotteryType) {
-  const key = lotteryType === 'ttl' ? 'ttl' : '539';
-  const store = readJson(LEARNING_FILE, { '539': { system: { total: 0, labels: {}, lessons: {} } }, 'ttl': { system: { total: 0, labels: {}, lessons: {} } } });
-  return store[key] || { system: { total: 0, labels: {}, lessons: {} } };
-}
-
 module.exports = {
   processTrackingResult,
   getResultHistory,
-  getLearningState
+  getLearningState,
+  getRecommendations
 };

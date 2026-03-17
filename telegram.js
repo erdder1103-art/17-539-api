@@ -44,8 +44,14 @@ function assertBotConfig() {
   return { token, chatId };
 }
 
+function assertBotToken() {
+  const { token } = getBotConfig();
+  if (!token) throw new Error('缺少 BOT_TOKEN 環境變數或伺服器已儲存設定');
+  return token;
+}
+
 async function callTelegram(method, payload = {}, options = {}) {
-  const { token } = assertBotConfig();
+  const token = assertBotToken();
   const timeoutMs = Number(options.timeoutMs || process.env.TG_TIMEOUT_MS || 8000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -74,11 +80,15 @@ async function callTelegram(method, payload = {}, options = {}) {
 }
 
 async function sendTelegramMessage(text, options = {}) {
-  const { chatId } = assertBotConfig();
+  const { chatId: defaultChatId } = assertBotConfig();
+  const chatId = String(options.chatId || defaultChatId || '').trim();
+  if (!chatId) throw new Error('缺少可發送的 chat_id');
   return callTelegram('sendMessage', {
     chat_id: chatId,
     text,
-    disable_web_page_preview: true
+    disable_web_page_preview: true,
+    reply_to_message_id: options.replyToMessageId || undefined,
+    allow_sending_without_reply: options.replyToMessageId ? true : undefined
   }, options);
 }
 
@@ -92,9 +102,11 @@ async function testTelegramSend(text = 'Telegram 測試成功') {
 }
 
 module.exports = {
+  callTelegram,
   sendTelegramMessage,
   getBotConfig,
   getBotRuntimeSummary,
   assertBotConfig,
+  assertBotToken,
   testTelegramSend
 };

@@ -57,7 +57,24 @@ const DEFAULT_FILE_CONTENTS = {
   'result_state.json': { '539': { processedIssues: [] }, 'ttl': { processedIssues: [] } },
   'learning_state.json': { '539': { system: { total: 0, labels: {}, lessons: {} } }, 'ttl': { system: { total: 0, labels: {}, lessons: {} } } },
   'weekly_stats.json': { '539': null, 'ttl': null },
-  'bot_config.json': { botToken: '', chatId: '', updatedAt: '' }
+  'bot_config.json': { botToken: '', chatId: '', updatedAt: '' },
+  'bot_runtime.json': {
+    enabled: true,
+    polling: false,
+    offset: 0,
+    lastPollAt: '',
+    lastHandledAt: '',
+    lastUpdateId: 0,
+    lastChatId: '',
+    lastChatTitle: '',
+    lastMessageText: '',
+    totalUpdates: 0,
+    handledMessages: 0,
+    ignoredMessages: 0,
+    errorCount: 0,
+    lastError: '',
+    lastResponsePreview: ''
+  }
 };
 
 function initializeDataFiles() {

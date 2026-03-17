@@ -9,6 +9,7 @@ const {
 const { formatTaipeiCompact, formatTaipeiDateTime } = require('./utils/time');
 
 const inflightByKey = new Map();
+const FULL_GROUP_SIZE = 19;
 
 function pad2(n) {
   return String(parseInt(n, 10)).padStart(2, '0');
@@ -39,7 +40,7 @@ function normalizeGroups(groups) {
     group2: validateGroup('第二組', groups.group2 || [], 5),
     group3: validateGroup('第三組', groups.group3 || [], 5),
     group4: validateGroup('第四組', groups.group4 || [], 5),
-    full: validateGroup('全車號碼', groups.full || [])
+    full: validateGroup('全車號碼', groups.full || [], FULL_GROUP_SIZE)
   };
 }
 
@@ -48,6 +49,20 @@ function ensureMainGroupsUnique(parsed, labelPrefix = '') {
   if (new Set(allMain).size !== allMain.length) {
     throw new Error(`${labelPrefix}第一組到第四組之間不可重複號碼`);
   }
+}
+
+function buildValidationSummary(groups) {
+  return {
+    groupSizes: {
+      group1: groups.group1.length,
+      group2: groups.group2.length,
+      group3: groups.group3.length,
+      group4: groups.group4.length,
+      full: groups.full.length
+    },
+    allMainUnique: new Set([...groups.group1, ...groups.group2, ...groups.group3, ...groups.group4]).size === 20,
+    fullUnique: new Set(groups.full).size === groups.full.length
+  };
 }
 
 function defaultSystemSource(payload) {
@@ -79,7 +94,8 @@ function validatePayload(payload) {
 
 function validateManualPayload(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
-  const sourceName = String(payload.sourceName || '').trim() || '未命名通報';
+  const sourceName = String(payload.sourceName || '').trim();
+  if (!sourceName) throw new Error('請輸入通報名稱');
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
   const groups = normalizeGroups(payload.groups || {});
   ensureMainGroupsUnique(groups, '手動');
@@ -216,6 +232,7 @@ async function confirmTracking(payload) {
       replacedCount: saveResult.replaced ? 1 : 0,
       telegramSent: true,
       tracking: record,
+      validation: buildValidationSummary(record.groups),
       message: replacedOldTracking
         ? `${parsed.lotteryTitle} 已更新系統追蹤，舊追蹤已自動失效`
         : `${parsed.lotteryTitle} 已建立追蹤並送出通報`
@@ -264,6 +281,7 @@ async function confirmManualTracking(payload) {
       replacedOldTracking: Boolean(existing),
       replacedCount: Array.isArray(saveResult.replaced) ? saveResult.replaced.length : 0,
       tracking: record,
+      validation: buildValidationSummary(record.groups),
       message: existing
         ? `${parsed.lotteryTitle} 已更新手動追蹤：${record.sourceName}`
         : `${parsed.lotteryTitle} 已新增手動追蹤：${record.sourceName}`
@@ -304,4 +322,4 @@ function getTrackingOverview(lotteryType) {
   };
 }
 
-module.exports = { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview };
+module.exports = { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview, FULL_GROUP_SIZE };

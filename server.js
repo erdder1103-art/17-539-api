@@ -7,10 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview } = require('./trackingService');
 const { getActiveTrackings } = require('./trackingStore');
-const { processTrackingResult, getResultHistory, getLearningState } = require('./resultService');
+const { processTrackingResult, getResultHistory, getLearningState, getRecommendations } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
 const { getBotRuntimeSummary, testTelegramSend } = require('./telegram');
+const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
 const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug } = require('./dataPaths');
 
@@ -37,6 +38,21 @@ let cache539 = [];
 let cacheTTL = [];
 let lastUpdate = null;
 let isUpdating = false;
+let updateTimer = null;
+const UPDATE_INTERVAL_MS = 30 * 1000;
+const syncState = {
+  intervalMs: UPDATE_INTERVAL_MS,
+  startedAt: formatTaipeiDateTime(),
+  runCount: 0,
+  successCount: 0,
+  failureCount: 0,
+  consecutiveFailures: 0,
+  lastStartedAt: '',
+  lastFinishedAt: '',
+  lastSuccessAt: '',
+  lastError: '',
+  lastDurationMs: 0
+};
 
 function pad2(n) { return String(Number(n)).padStart(2, '0'); }
 function isValidFive(nums) {
@@ -114,50 +130,100 @@ async function handleAutoCheck(type, title, list) {
   }
 }
 async function update539() {
+  let lastErr = null;
   for (let i = 0; i < 3; i++) {
     try {
       const html = await fetchPage('https://sc888.net/index.php?s=/LotteryFtn/index');
       const list = parse539(html);
-      if (list.length > 0) {
-        const oldIssue = cache539[0] ? `${cache539[0].issue}|${cache539[0].date}|${cache539[0].numbers.join('-')}` : null;
-        const newIssue = `${list[0].issue}|${list[0].date}|${list[0].numbers.join('-')}`;
-        cache539 = list;
-        if (oldIssue !== newIssue) await handleAutoCheck('539', '539', list);
-        return;
-      }
-    } catch (e) { console.log(`539 第 ${i + 1} 次更新失敗：`, e.message); }
+      if (!list.length) throw new Error('539 未解析到有效資料');
+      const oldIssue = cache539[0] ? `${cache539[0].issue}|${cache539[0].date}|${cache539[0].numbers.join('-')}` : null;
+      const newIssue = `${list[0].issue}|${list[0].date}|${list[0].numbers.join('-')}`;
+      cache539 = list;
+      if (oldIssue !== newIssue) await handleAutoCheck('539', '539', list);
+      return true;
+    } catch (e) { lastErr = e; console.log(`539 第 ${i + 1} 次更新失敗：`, e.message); }
   }
+  throw lastErr || new Error('539 更新失敗');
 }
 async function updateTTL() {
+  let lastErr = null;
   for (let i = 0; i < 3; i++) {
     try {
       const html = await fetchPage('https://sc888.net/index.php?s=/LotteryFan/index');
       const list = parseTTL(html);
-      if (list.length > 0) {
-        const oldIssue = cacheTTL[0] ? `${cacheTTL[0].issue}|${cacheTTL[0].date}|${cacheTTL[0].numbers.join('-')}` : null;
-        const newIssue = `${list[0].issue}|${list[0].date}|${list[0].numbers.join('-')}`;
-        cacheTTL = list;
-        if (oldIssue !== newIssue) await handleAutoCheck('ttl', '天天樂', list);
-        return;
-      }
-    } catch (e) { console.log(`TTL 第 ${i + 1} 次更新失敗：`, e.message); }
+      if (!list.length) throw new Error('天天樂 未解析到有效資料');
+      const oldIssue = cacheTTL[0] ? `${cacheTTL[0].issue}|${cacheTTL[0].date}|${cacheTTL[0].numbers.join('-')}` : null;
+      const newIssue = `${list[0].issue}|${list[0].date}|${list[0].numbers.join('-')}`;
+      cacheTTL = list;
+      if (oldIssue !== newIssue) await handleAutoCheck('ttl', '天天樂', list);
+      return true;
+    } catch (e) { lastErr = e; console.log(`TTL 第 ${i + 1} 次更新失敗：`, e.message); }
   }
+  throw lastErr || new Error('天天樂 更新失敗');
 }
 async function updateAll() {
-  if (isUpdating) return;
+  if (isUpdating) return { skipped: true, reason: 'busy' };
   isUpdating = true;
+  const startedAt = Date.now();
+  syncState.runCount += 1;
+  syncState.lastStartedAt = formatTaipeiDateTime();
   try {
     await Promise.all([update539(), updateTTL()]);
     lastUpdate = formatTaipeiDateTime();
+    syncState.successCount += 1;
+    syncState.consecutiveFailures = 0;
+    syncState.lastSuccessAt = lastUpdate;
+    syncState.lastError = '';
+    return { ok: true, updated: lastUpdate };
+  } catch (err) {
+    syncState.failureCount += 1;
+    syncState.consecutiveFailures += 1;
+    syncState.lastError = err.message;
+    throw err;
   } finally {
+    syncState.lastFinishedAt = formatTaipeiDateTime();
+    syncState.lastDurationMs = Date.now() - startedAt;
     isUpdating = false;
   }
+}
+
+function scheduleNextUpdate() {
+  if (updateTimer) clearTimeout(updateTimer);
+  updateTimer = setTimeout(async () => {
+    try {
+      await updateAll();
+    } catch (err) {
+      console.error('updateAll failed:', err.message);
+    } finally {
+      scheduleNextUpdate();
+    }
+  }, UPDATE_INTERVAL_MS);
 }
 
 app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, timezone: 'Asia/Taipei', count: cache539.length, draws: cache539 }));
 app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, timezone: 'Asia/Taipei', count: cacheTTL.length, draws: cacheTTL }));
 app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, timezone: 'Asia/Taipei', lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
-app.get('/api/health', (req, res) => res.json({ ok: true, updated: lastUpdate, timezone: 'Asia/Taipei', isUpdating, telegram: getBotRuntimeSummary(), storage: { dataDir: ACTIVE_DATA_DIR, defaultVolumeDir: DEFAULT_VOLUME_DIR, localDataDir: LOCAL_DATA_DIR, volumeMounted: ACTIVE_DATA_DIR === DEFAULT_VOLUME_DIR, init: storageInit } }));
+function getHealthSnapshot() {
+  return {
+    ok: true,
+    updated: lastUpdate,
+    timezone: 'Asia/Taipei',
+    isUpdating,
+    sync: syncState,
+    telegram: getBotRuntimeSummary(),
+    botInteraction: getBotInteractionState(),
+    storage: {
+      dataDir: ACTIVE_DATA_DIR,
+      defaultVolumeDir: DEFAULT_VOLUME_DIR,
+      localDataDir: LOCAL_DATA_DIR,
+      volumeMounted: ACTIVE_DATA_DIR === DEFAULT_VOLUME_DIR,
+      init: storageInit
+    }
+  };
+}
+
+app.get('/api/health', (req, res) => res.json(getHealthSnapshot()));
+app.get('/api/bot/runtime', (req, res) => res.json({ ok: true, ...getBotInteractionState() }));
 app.get('/api/debug/storage', (req, res) => res.json({ ok: true, storage: getStorageDebug() }));
 app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
 app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
@@ -165,6 +231,7 @@ app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHi
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
+app.get('/api/recommend/:type', (req, res) => res.json(getRecommendations(req.params.type)));
 
 app.get('/api/telegram/config', (req, res) => {
   const saved = readBotConfig();
@@ -240,8 +307,17 @@ app.listen(PORT, async () => {
   console.log('Storage data dir:', ACTIVE_DATA_DIR);
   console.log('Storage volume dir:', DEFAULT_VOLUME_DIR);
   console.log('Storage init:', JSON.stringify(storageInit));
-  await updateAll();
-  setInterval(() => {
-    updateAll().catch((err) => console.error('updateAll failed:', err.message));
-  }, 120 * 1000);
+  console.log('Sync interval ms:', UPDATE_INTERVAL_MS);
+  try {
+    await updateAll();
+  } catch (err) {
+    console.error('initial updateAll failed:', err.message);
+  }
+  try {
+    startBotInteraction({ getHealth: getHealthSnapshot });
+    console.log('Telegram group interaction polling started');
+  } catch (err) {
+    console.error('startBotInteraction failed:', err.message);
+  }
+  scheduleNextUpdate();
 });
