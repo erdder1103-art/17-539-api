@@ -1048,28 +1048,70 @@
       return parseInt(a.num,10) - parseInt(b.num,10);
     });
 
-    const hot = hotRank.slice(0, 10).map(x=>x.num);
-    const cold = coldRank.slice(0, 10).map(x=>x.num);
+    const recent50 = draws.slice(0, 50);
+    const recent100 = draws.slice(0, 100);
+    const counts50 = {};
+    const counts100 = {};
+    const pairCounts50 = {};
+    const tripleCounts50 = {};
+    const pairCounts100 = {};
 
-    const pairCounts = {};
-    const tripleCounts = {};
+    const maxNum = state.lotteries[id].cfg.maxNum;
+    for(let i=1;i<=maxNum;i++){
+      const n = String(i).padStart(2, '0');
+      counts50[n] = 0;
+      counts100[n] = 0;
+    }
 
-    draws.forEach(draw=>{
+    recent50.forEach(draw=>{
+      draw.forEach(n=> counts50[n] = (counts50[n] || 0) + 1);
       getCombinations(draw, 2).forEach(pair=>{
         const key = comboKey(pair);
-        pairCounts[key] = (pairCounts[key] || 0) + 1;
+        pairCounts50[key] = (pairCounts50[key] || 0) + 1;
       });
       getCombinations(draw, 3).forEach(triple=>{
         const key = comboKey(triple);
-        tripleCounts[key] = (tripleCounts[key] || 0) + 1;
+        tripleCounts50[key] = (tripleCounts50[key] || 0) + 1;
       });
     });
 
-    const topPairs = Object.entries(pairCounts)
+    recent100.forEach(draw=>{
+      draw.forEach(n=> counts100[n] = (counts100[n] || 0) + 1);
+      getCombinations(draw, 2).forEach(pair=>{
+        const key = comboKey(pair);
+        pairCounts100[key] = (pairCounts100[key] || 0) + 1;
+      });
+    });
+
+    const hot = hotRank.slice(0, 10).map(x=>x.num);
+    const cold = coldRank.slice(0, 10).map(x=>x.num);
+    const mid = arr.map(x=>x.num).filter(n=>!hot.includes(n) && !cold.includes(n));
+
+    const highRiskPairs = new Set(
+      Object.entries(pairCounts50)
+        .filter(([,count]) => count >= 2)
+        .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 24)
+        .map(([key])=>key)
+    );
+
+    const highRiskTriples = new Set(
+      Object.entries(tripleCounts50)
+        .filter(([,count]) => count >= 1)
+        .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 12)
+        .map(([key])=>key)
+    );
+
+    const riskyNumberSet = new Set();
+    [...highRiskPairs].forEach(key=> key.split('-').forEach(n=> riskyNumberSet.add(n)));
+    [...highRiskTriples].forEach(key=> key.split('-').forEach(n=> riskyNumberSet.add(n)));
+
+    const topPairs = Object.entries(pairCounts50)
       .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8);
 
-    const topTriples = Object.entries(tripleCounts)
+    const topTriples = Object.entries(tripleCounts50)
       .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8);
 
@@ -1079,10 +1121,19 @@
       draws,
       hot,
       cold,
+      mid,
       hotRank,
       coldRank,
-      pairCounts,
-      tripleCounts,
+      counts50,
+      counts100,
+      pairCounts: pairCounts50,
+      tripleCounts: tripleCounts50,
+      pairCounts50,
+      tripleCounts50,
+      pairCounts100,
+      highRiskPairs,
+      highRiskTriples,
+      riskyNumberSet,
       topPairs,
       topTriples
     };
@@ -1181,90 +1232,120 @@
     const even = nums.length - odd;
     const adjacent = nums.slice(1).reduce((acc, n, idx)=> acc + (n - nums[idx] === 1 ? 1 : 0), 0);
     const tens = {};
-    const tails = {};
     nums.forEach(n=>{
       const bucket = Math.floor(n / 10);
-      const tail = n % 10;
       tens[bucket] = (tens[bucket] || 0) + 1;
-      tails[tail] = (tails[tail] || 0) + 1;
     });
     const maxTens = Math.max(...Object.values(tens), 0);
-    const maxTail = Math.max(...Object.values(tails), 0);
     const span = nums[nums.length - 1] - nums[0];
     const oddEvenGap = Math.abs(odd - even);
-    return {
-      odd,
-      even,
-      adjacent,
-      oddEvenGap,
-      maxTens,
-      maxTail,
-      span,
-      isLowRisk: adjacent <= 1 && maxTens <= 2 && maxTail <= 1 && oddEvenGap <= 1 && span >= 14,
-      isMediumRisk: adjacent <= 2 && maxTens <= 3 && maxTail <= 2 && oddEvenGap <= 3 && span >= 10,
-      shouldReject: adjacent >= 2 || maxTens >= 3 || maxTail >= 2 || oddEvenGap >= 3 || span <= 11
-    };
+    return { odd, even, adjacent, oddEvenGap, maxTens, span };
   }
 
-  function buildStrictValidation(groups){
-    const order = Object.keys(groups || {});
-    const firstFour = order.slice(0,4).map(name => groups[name] || []);
-    const risks = firstFour.map(buildGroupStructure);
-    const badIndex = risks.findIndex(r => !r.isLowRisk);
-    return {
-      ok: badIndex === -1,
-      badIndex,
-      risks,
-      lowRiskGroups: risks.filter(r => r.isLowRisk).length
+  function classifyHeat(num, analysis){
+    if((analysis.hot || []).includes(num)) return 'hot';
+    if((analysis.cold || []).includes(num)) return 'cold';
+    return 'mid';
+  }
+
+  function countHeat(group, analysis, kind){
+    return group.filter(n => classifyHeat(n, analysis) === kind).length;
+  }
+
+  function getGroupRiskSummary(group, analysis){
+    const structure = buildGroupStructure(group);
+    let riskyPairs = 0;
+    let riskyTriples = 0;
+    getCombinations(group, 2).forEach(pair=>{ if((analysis.highRiskPairs || new Set()).has(comboKey(pair))) riskyPairs += 1; });
+    getCombinations(group, 3).forEach(triple=>{ if((analysis.highRiskTriples || new Set()).has(comboKey(triple))) riskyTriples += 1; });
+    const hotCount = countHeat(group, analysis, 'hot');
+    const riskyNums = group.filter(n => (analysis.riskyNumberSet || new Set()).has(n)).length;
+    let score = riskyPairs * 120 + riskyTriples * 220 + Math.max(0, hotCount - 2) * 25 + Math.max(0, riskyNums - 2) * 18;
+    score += Math.max(0, structure.adjacent - 2) * 12;
+    score += Math.max(0, structure.maxTens - 3) * 10;
+    score += Math.max(0, structure.oddEvenGap - 3) * 8;
+    return { structure, riskyPairs, riskyTriples, hotCount, riskyNums, score };
+  }
+
+  function chooseAdaptiveTries(){
+    return 100;
+  }
+
+  function getStageLabel(n){
+    if(n < 30) return '建立第一階段候選';
+    if(n < 60) return '建立第二階段候選';
+    return '建立第三階段候選';
+  }
+
+  function pickBestNumberForGroup(candidates, group, analysis){
+    let best = null;
+    for(const num of shuffle(candidates).slice(0, Math.min(candidates.length, 12))){
+      const test = [...group, num].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+      const r = getGroupRiskSummary(test, analysis);
+      let cost = r.score;
+      const heat = classifyHeat(num, analysis);
+      if(heat === 'hot' && r.hotCount > 2) cost += 40;
+      if(heat === 'cold' && countHeat(test, analysis, 'cold') > 2) cost += 10;
+      if((analysis.riskyNumberSet || new Set()).has(num) && group.length < 4) cost += 10;
+      if(!best || cost < best.cost) best = { num, cost };
+    }
+    return best?.num || shuffle(candidates)[0];
+  }
+
+  function buildCandidateGroups(allNums, analysis){
+    const available = new Set(allNums);
+    const groups = [[], [], [], []];
+    const hot = shuffle((analysis.hot || []).filter(n => available.has(n)));
+    const mid = shuffle((analysis.mid || []).filter(n => available.has(n)));
+    const cold = shuffle((analysis.cold || []).filter(n => available.has(n)));
+    const queue = [
+      ...hot,
+      ...mid,
+      ...cold,
+      ...shuffle(allNums.filter(n => !hot.includes(n) && !mid.includes(n) && !cold.includes(n)))
+    ];
+
+    const consume = (num, gi) => {
+      if(!num || !available.has(num) || groups[gi].length >= 5) return false;
+      groups[gi].push(num);
+      groups[gi].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+      available.delete(num);
+      return true;
     };
+
+    // 每組先盡量放 1 顆熱號
+    for(let gi=0; gi<4; gi++){
+      const pick = pickBestNumberForGroup(hot.filter(n=>available.has(n)), groups[gi], analysis);
+      if(pick) consume(pick, gi);
+    }
+
+    // 再依序補滿，每次都挑對該組風險最低的號碼
+    for(let round=0; round<5; round++){
+      for(let gi=0; gi<4; gi++){
+        if(groups[gi].length >= 5) continue;
+        const pool = queue.filter(n => available.has(n));
+        const pick = pickBestNumberForGroup(pool, groups[gi], analysis);
+        consume(pick, gi);
+      }
+    }
+
+    const car = [...available].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+    return { groups, car };
   }
 
   function evaluatePartition(groups, analysis){
-    let total = 0;
-    let twoHitRisk = 0;
-    let threeHitRisk = 0;
-    let lowRiskGroups = 0;
-    let mediumRiskGroups = 0;
-    let rejectedGroups = 0;
-    const structuralRisks = [];
-
-    groups.forEach(g=>{
-      total += scoreSingleGroup(g, analysis);
-      const risk = buildGroupStructure(g);
-      structuralRisks.push(risk);
-      if(risk.isLowRisk) lowRiskGroups += 1;
-      if(!risk.isLowRisk && risk.isMediumRisk) mediumRiskGroups += 1;
-      if(risk.shouldReject) rejectedGroups += 1;
-      analysis.draws.forEach(draw=>{
-        const hit = intersectionCount(g, draw);
-        if(hit === 2) twoHitRisk++;
-        if(hit === 3) threeHitRisk++;
-      });
-      total += risk.adjacent * 180000;
-      total += Math.max(0, risk.maxTens - 2) * 240000;
-      total += risk.oddEvenGap * 70000;
-      if(risk.span < 12) total += (12 - risk.span) * 40000;
-      if(risk.shouldReject) total += 5000000;
-    });
-
-    total += twoHitRisk * 1000000;
-    total += threeHitRisk * 3000000;
-    total -= lowRiskGroups * 120000;
-    return { total, twoHitRisk, threeHitRisk, lowRiskGroups, mediumRiskGroups, rejectedGroups, structuralRisks };
-  }
-
-  function chooseAdaptiveTries(drawCount){
-    if(drawCount >= 200) return 180000;
-    if(drawCount >= 150) return 140000;
-    if(drawCount >= 100) return 110000;
-    if(drawCount >= 50) return 80000;
-    return 50000;
-  }
-
-  function getEscalatingTryPlan(drawCount){
-    const base = chooseAdaptiveTries(drawCount || 0);
-    const plan = [base, Math.floor(base * 1.35), Math.floor(base * 1.7), Math.floor(base * 2.1)].map(v => Math.max(base, v));
-    return [...new Set(plan)].slice(0,4);
+    const summaries = groups.map(g => getGroupRiskSummary(g, analysis));
+    const riskyPairs = summaries.reduce((a, s)=> a + s.riskyPairs, 0);
+    const riskyTriples = summaries.reduce((a, s)=> a + s.riskyTriples, 0);
+    const hotOverload = summaries.reduce((a, s)=> a + Math.max(0, s.hotCount - 2), 0);
+    const score = riskyPairs * 120 + riskyTriples * 220 + hotOverload * 35 + summaries.reduce((a,s)=>a+s.score,0);
+    return {
+      score,
+      lowRiskGroups: summaries.filter(s => s.riskyPairs === 0 && s.riskyTriples === 0 && s.hotCount <= 2).length,
+      summaries,
+      riskyPairs,
+      riskyTriples
+    };
   }
 
   async function buildSmartGroups(id, analysis, onProgress){
@@ -1279,69 +1360,69 @@
       $(`${id}_prize5Desc`).value.trim() || "全車號碼"
     ];
 
-    const target = chooseAdaptiveTries(analysis.drawCount || 0);
-    const chunkSize = 40;
+    const target = chooseAdaptiveTries();
     const startedAt = Date.now();
-    let searched = 0;
+    let bestResult = null;
 
-    while (searched < target) {
-      const upper = Math.min(target, searched + chunkSize);
-      for(let t=searched; t<upper; t++){
-        if ((t - searched) % 5 === 0) {
-          const elapsedMs = Date.now() - startedAt;
-          if (typeof onProgress === 'function') onProgress({ searched: t, target, elapsedMs, lowRiskFound: 0, stageLabel: t < target * 0.25 ? '建立第一組候選' : t < target * 0.5 ? '建立第二組候選' : t < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
-          await sleep(0);
-        }
-        const shuffled = shuffle(allNums);
-        const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g3 = shuffled.slice(10, 15).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g4 = shuffled.slice(15, 20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const g5 = shuffled.slice(20).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-        const firstFour = [g1, g2, g3, g4];
-        const validation = buildStrictValidation({ [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 });
-        if (!validation.ok) continue;
-        const evalResult = evaluatePartition(firstFour, analysis);
-        const elapsedMs = Date.now() - startedAt;
-        return {
-          score: evalResult.total,
-          twoHitRisk: evalResult.twoHitRisk,
-          threeHitRisk: evalResult.threeHitRisk,
-          lowRiskGroups: 4,
-          mediumRiskGroups: 0,
-          rejectedGroups: 0,
-          analyzedDrawCount: analysis.drawCount || 0,
-          generatedTryCount: t + 1,
-          searchedCandidates: t + 1,
-          selectedPool: 'low',
-          downgraded: false,
-          elapsedMs,
-          groups: {
-            [groupNames[0]]: g1,
-            [groupNames[1]]: g2,
-            [groupNames[2]]: g3,
-            [groupNames[3]]: g4,
-            [groupNames[4]]: g5
-          }
-        };
-      }
-      searched = upper;
+    for(let t=1; t<=target; t++){
+      const built = buildCandidateGroups(allNums, analysis);
+      const evalResult = evaluatePartition(built.groups, analysis);
       const elapsedMs = Date.now() - startedAt;
-      if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0, stageLabel: searched < target * 0.25 ? '建立第一組候選' : searched < target * 0.5 ? '建立第二組候選' : searched < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
-      await sleep(16);
+      if (typeof onProgress === 'function') {
+        onProgress({
+          searched: t,
+          target,
+          elapsedMs,
+          lowRiskFound: bestResult ? 1 : 0,
+          stageLabel: getStageLabel(t),
+          statusText: bestResult ? '已找到候選' : '搜尋中',
+          footerText: '以近50期高風險雙號 / 三連號、熱中冷分配為主，盡量避開同組碰撞；全車可承接熱號與高風險號。'
+        });
+      }
+
+      const groups = {
+        [groupNames[0]]: built.groups[0],
+        [groupNames[1]]: built.groups[1],
+        [groupNames[2]]: built.groups[2],
+        [groupNames[3]]: built.groups[3],
+        [groupNames[4]]: built.car
+      };
+
+      const candidate = {
+        score: evalResult.score,
+        lowRiskGroups: evalResult.lowRiskGroups,
+        analyzedDrawCount: analysis.drawCount || 0,
+        generatedTryCount: t,
+        searchedCandidates: t,
+        selectedPool: 'balanced',
+        downgraded: false,
+        elapsedMs,
+        groups,
+        riskyPairs: evalResult.riskyPairs,
+        riskyTriples: evalResult.riskyTriples
+      };
+
+      if(!bestResult || candidate.score < bestResult.score){
+        bestResult = candidate;
+      }
+
+      if(evalResult.riskyTriples === 0 && evalResult.riskyPairs <= 1 && evalResult.lowRiskGroups >= 3){
+        return candidate;
+      }
+
+      if(t % 10 === 0) await sleep(0);
     }
 
-    return {
+    return bestResult || {
       noQualifiedResult: true,
       analyzedDrawCount: analysis.drawCount || 0,
-      generatedTryCount: searched,
-      searchedCandidates: searched,
+      generatedTryCount: target,
+      searchedCandidates: target,
       lowRiskGroups: 0,
       selectedPool: 'none',
       elapsedMs: Date.now() - startedAt
     };
   }
-
 
   function formatEta(ms){
     if (!Number.isFinite(ms) || ms <= 0) return '估算中';
@@ -2314,17 +2395,17 @@ function bindEvents(id){
       btn.textContent = '搜尋低風險中...';
       setConfirmAvailability(id, false, "系統正在搜尋合格低風險方案");
       openSearchOverlay(id);
-      renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
+      renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(), elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
       await sleep(32);
       try {
         const bestResult = await buildSmartGroups(id, analysis, (progress)=>renderSearchProgress(id, progress));
         if(!bestResult || bestResult.noQualifiedResult){
           state.lotteries[id].generatedGroups = null;
-          getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>低風險方案不足</b><span style="color:#ffd8a8;">本次已自動分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案，因此不顯示、不開放通報。</span></div>`;
-          updateSearchOverlay(id, { searched: bestResult?.searchedCandidates || 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: bestResult?.elapsedMs || 0, stageLabel: '未找到合格方案', statusText: '本輪失敗', footerText: `本輪已分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案。` });
+          getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>生成失敗</b><span style="color:#ffd8a8;">本次搜尋未產生可用方案，請重新生成。</span></div>`;
+          updateSearchOverlay(id, { searched: bestResult?.searchedCandidates || 0, target: chooseAdaptiveTries(), elapsedMs: bestResult?.elapsedMs || 0, stageLabel: '未找到可用方案', statusText: '本輪失敗', footerText: `本輪已分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到可用方案。` });
           searchAnimState.running = false;
-          setConfirmAvailability(id, false, "未找到合格低風險方案");
-          showMiniNotice(`${state.lotteries[id].cfg.title}：未找到合格低風險方案，本次不顯示也不開放通報`, "warn");
+          setConfirmAvailability(id, false, "未找到可用方案");
+          showMiniNotice(`${state.lotteries[id].cfg.title}：本輪未找到可用方案，請重試`, "warn");
           persistAll();
           return;
         }
@@ -2333,7 +2414,7 @@ function bindEvents(id){
         renderGroupPreview(id, bestResult);
         applyGeneratedGroupsToLog(id, bestResult.groups);
         setConfirmAvailability(id, true);
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到第一組合格低風險方案，可直接通報`, "ok");
+        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到可用低風險方案，可直接通報`, "ok");
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
