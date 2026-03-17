@@ -2261,6 +2261,14 @@ function cleanupNumbers(arr, maxNum){
       return;
     }
     try{
+      const manualGroupMap = {
+        [($(`${id}_prize1Desc`).value.trim() || '第一組')]: group1,
+        [($(`${id}_prize2Desc`).value.trim() || '第二組')]: group2,
+        [($(`${id}_prize3Desc`).value.trim() || '第三組')]: group3,
+        [($(`${id}_prize4Desc`).value.trim() || '第四組')]: group4,
+        [($(`${id}_prize5Desc`).value.trim() || '全車號碼')]: full
+      };
+      const manualAnalysis = buildTrackingAnalysisMetaFromGroups(manualGroupMap, state.lotteries[id].historyAnalysis);
       const res = await fetch(`${API_BASE}/api/manual-tracking`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2269,7 +2277,8 @@ function cleanupNumbers(arr, maxNum){
           lotteryTitle: s.cfg.title,
           confirmedAt: nowFull(),
           sourceName,
-          groups: { group1, group2, group3, group4, full }
+          groups: { group1, group2, group3, group4, full },
+          analysis: manualAnalysis
         })
       });
       const result = await res.json().catch(()=>null);
@@ -2384,15 +2393,13 @@ function buildSimpleGeneratedPlan(id, analysis){
     selectedPool: 'simple',
     downgraded: false,
     whyQualified: `已依近50期避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。`,
-    analysisMeta: {
-      evaluatedWindow: 50,
-      drawCount: analysis.drawCount || 0,
-      twoHitRisk,
-      threeHitRisk,
-      hotNumbers: hot,
-      coldNumbers: cold,
-      riskGroupDetails
-    }
+    analysisMeta: (() => {
+      const meta = buildTrackingAnalysisMetaFromGroups(groups, analysis) || {};
+      meta.twoHitRisk = twoHitRisk;
+      meta.threeHitRisk = threeHitRisk;
+      meta.riskGroupDetails = riskGroupDetails;
+      return meta;
+    })()
   };
 }
 

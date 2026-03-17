@@ -312,6 +312,44 @@ function featureLabel(name, valueKey) {
   return map[name] ? map[name](valueKey) : `${name}:${valueKey}`;
 }
 
+
+function comboKeyLocal(nums) {
+  return [...nums].map(n => String(n).padStart(2, '0')).sort().join('-');
+}
+
+function getCombinationsLocal(arr, k) {
+  const out = [];
+  const a = [...arr];
+  const dfs = (start, path) => {
+    if (path.length === k) { out.push([...path]); return; }
+    for (let i = start; i < a.length; i += 1) {
+      path.push(a[i]);
+      dfs(i + 1, path);
+      path.pop();
+    }
+  };
+  dfs(0, []);
+  return out;
+}
+
+function enrichAnalysisForTracking(tracking) {
+  const analysis = tracking.analysis || {};
+  const groups = tracking.groups || {};
+  const mainGroups = [groups.group1 || [], groups.group2 || [], groups.group3 || [], groups.group4 || []].map(g => g.map(n => String(n).padStart(2, '0')));
+  const pairSet = new Set(Array.isArray(analysis.highRiskPairs) ? analysis.highRiskPairs : []);
+  const tripleSet = new Set(Array.isArray(analysis.highRiskTriples) ? analysis.highRiskTriples : []);
+  const hotSet = new Set(Array.isArray(analysis.hotNumbers) ? analysis.hotNumbers : []);
+  const riskySet = new Set(Array.isArray(analysis.riskyNumbers) ? analysis.riskyNumbers : []);
+  const details = mainGroups.map((g, idx) => ({
+    groupIndex: idx + 1,
+    hotCount: g.filter(n => hotSet.has(n)).length,
+    riskyNumbers: g.filter(n => riskySet.has(n)),
+    riskyPairHits: getCombinationsLocal(g, 2).filter(pair => pairSet.has(comboKeyLocal(pair))).map(pair => pair.join('、')),
+    riskyTripleHits: getCombinationsLocal(g, 3).filter(triple => tripleSet.has(comboKeyLocal(triple))).map(triple => triple.join('、'))
+  }));
+  return { ...analysis, riskGroupDetails: details };
+}
+
 function dedupeLabels(arr) {
   const seen = new Set();
   const out = [];
@@ -326,7 +364,7 @@ function dedupeLabels(arr) {
 
 
 function getAnalysisProfile(tracking) {
-  const analysis = tracking.analysis || {};
+  const analysis = enrichAnalysisForTracking(tracking);
   const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails : [];
   const hotCounts = details.map(d => Number(d.hotCount || 0));
   const riskyNumberCounts = details.map(d => Array.isArray(d.riskyNumbers) ? d.riskyNumbers.length : 0);
@@ -387,31 +425,26 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   const { analysis, hotCounts, riskyNumberCounts, totalPairHits, totalTripleHits, totalRiskyNumbers, hotSpreadPenalty, denseRiskGroups, anyGroupHotOver, anyGroupRiskyOver } = profile;
 
   const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.55;
-  let structurePenalty = 0;
-  structurePenalty += totalPairHits * 0.06;
-  structurePenalty += totalTripleHits * 0.11;
-  structurePenalty += Math.max(0, totalRiskyNumbers - 2) * 0.018;
-  structurePenalty += Math.max(0, anyGroupHotOver - 2) * 0.035;
-  structurePenalty += Math.max(0, anyGroupRiskyOver - 1) * 0.03;
-  structurePenalty += Math.max(0, hotSpreadPenalty - 1) * 0.015;
-  structurePenalty += denseRiskGroups * 0.015;
-  if (features.fullCoverage !== 19) structurePenalty += 0.025;
+  const weightedRisk = riskyNumberCounts.reduce((sum, v, idx) => sum + (v * 8) + (riskyPairCounts[idx] * 14) + (riskyTripleCounts[idx] * 24) + Math.max(0, hotCounts[idx] - 2) * 6, 0);
+  let structurePenalty = weightedRisk / 100;
+  structurePenalty += Math.max(0, hotSpreadPenalty - 1) * 0.01;
+  if (features.fullCoverage !== 19) structurePenalty += 0.02;
 
-  let tendency = basePass + 0.20 - structurePenalty;
-  tendency = Math.max(0.38, Math.min(0.86, tendency));
+  let tendency = basePass + 0.22 - structurePenalty;
+  tendency = Math.max(0.32, Math.min(0.90, tendency));
 
-  let severeRisk = 0.08 + totalPairHits * 0.04 + totalTripleHits * 0.1 + Math.max(0, totalRiskyNumbers - 3) * 0.01;
-  severeRisk = Math.max(0.03, Math.min(0.42, severeRisk));
+  let severeRisk = 0.05 + totalPairHits * 0.03 + totalTripleHits * 0.08 + Math.max(0, totalRiskyNumbers - 2) * 0.008 + denseRiskGroups * 0.01;
+  severeRisk = Math.max(0.02, Math.min(0.50, severeRisk));
   let retryRate = 1 - tendency - severeRisk;
-  retryRate = Math.max(0.06, Math.min(0.5, retryRate));
+  retryRate = Math.max(0.05, Math.min(0.55, retryRate));
 
-  let reliability = 52 + Math.min(total, 50) * 0.25 + Math.min(Number(analysis.drawCount || 0), 50) * 0.12;
-  reliability -= totalTripleHits * 6 + totalPairHits * 3 + Math.max(0, totalRiskyNumbers - 2) * 1.5;
-  reliability = Math.max(42, Math.min(90, reliability));
+  let reliability = 50 + Math.min(total, 50) * 0.2 + Math.min(Number(analysis.drawCount || 0), 50) * 0.12;
+  reliability -= weightedRisk * 0.18;
+  reliability = Math.max(35, Math.min(90, reliability));
 
   let riskLevel = '低';
-  if (totalTripleHits >= 1 || totalPairHits >= 2 || anyGroupRiskyOver >= 3 || anyGroupHotOver >= 4) riskLevel = '高';
-  else if (totalPairHits >= 1 || totalRiskyNumbers >= 5 || anyGroupRiskyOver >= 2 || anyGroupHotOver >= 3) riskLevel = '中';
+  if (weightedRisk >= 55 || totalTripleHits >= 1 || anyGroupRiskyOver >= 4) riskLevel = '高';
+  else if (weightedRisk >= 25 || totalPairHits >= 1 || anyGroupRiskyOver >= 2 || anyGroupHotOver >= 3) riskLevel = '中';
 
   const score = Math.round(tendency * 100 - severeRisk * 25 + reliability * 0.15);
   const narrative = buildRiskNarrativeFromAnalysis(features, tracking);
