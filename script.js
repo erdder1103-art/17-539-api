@@ -2341,6 +2341,60 @@ function makeGroupFromPools(targetSize, pools, used, highRiskPairs, highRiskTrip
   return group.sort((a,b)=>parseInt(a,10)-parseInt(b,10));
 }
 
+
+function buildTrackingAnalysisMetaFromGroups(groups, analysis){
+  const allNums = Object.keys((analysis && analysis.counts) || {}).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+  const hot = Array.isArray(analysis?.hot) ? analysis.hot.slice(0, 10) : [];
+  const cold = Array.isArray(analysis?.cold) ? analysis.cold.slice(0, 10) : [];
+  const mid = allNums.filter(n => !hot.includes(n) && !cold.includes(n));
+  const pairCounts = analysis?.pairCounts || {};
+  const tripleCounts = analysis?.tripleCounts || {};
+  const topPairs = Array.isArray(analysis?.topPairs) ? analysis.topPairs : [];
+  const topTriples = Array.isArray(analysis?.topTriples) ? analysis.topTriples : [];
+  const highRiskPairs = topPairs.filter(([key,count]) => Number(count||0) >= 2).map(([key]) => key);
+  const highRiskTriples = topTriples.filter(([key,count]) => Number(count||0) >= 2).map(([key]) => key);
+  const riskyNumberSet = new Set();
+  highRiskPairs.forEach(key => key.split('-').forEach(n => riskyNumberSet.add(n)));
+  highRiskTriples.forEach(key => key.split('-').forEach(n => riskyNumberSet.add(n)));
+  const mains = [
+    groups[Object.keys(groups)[0]] || [],
+    groups[Object.keys(groups)[1]] || [],
+    groups[Object.keys(groups)[2]] || [],
+    groups[Object.keys(groups)[3]] || []
+  ].map(g => g.map(n => String(n).padStart(2,'0')));
+  const riskGroupDetails = mains.map((g, idx) => {
+    const riskyPairHits = getCombinations(g,2).filter(pair => highRiskPairs.includes(comboKey(pair))).map(pair => pair.join('、'));
+    const riskyTripleHits = getCombinations(g,3).filter(triple => highRiskTriples.includes(comboKey(triple))).map(triple => triple.join('、'));
+    return {
+      groupIndex: idx + 1,
+      groupNumbers: g,
+      hotCount: g.filter(n => hot.includes(n)).length,
+      midCount: g.filter(n => mid.includes(n)).length,
+      coldCount: g.filter(n => cold.includes(n)).length,
+      riskyNumbers: g.filter(n => riskyNumberSet.has(n)),
+      riskyPairHits,
+      riskyTripleHits
+    };
+  });
+  return {
+    drawCount: Number(analysis?.drawCount || 0),
+    evaluatedWindow: Number(analysis?.drawCount || 0),
+    counts: analysis?.counts || {},
+    hotNumbers: hot,
+    midNumbers: mid,
+    coldNumbers: cold,
+    pairCounts,
+    tripleCounts,
+    pairWeightMap: pairCounts,
+    tripleWeightMap: tripleCounts,
+    hotScoreMap: analysis?.counts || {},
+    highRiskPairs,
+    highRiskTriples,
+    riskyNumbers: Array.from(riskyNumberSet),
+    riskGroupDetails
+  };
+}
+
 function buildSimpleGeneratedPlan(id, analysis){
   const hot = (analysis.hot || []).slice(0, 10);
   const cold = (analysis.cold || []).slice(0, 10);

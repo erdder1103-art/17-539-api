@@ -363,22 +363,73 @@ function dedupeLabels(arr) {
 }
 
 
+function sumWeights(keys, weightMap) {
+  return (keys || []).reduce((sum, key) => sum + Number(weightMap[key] || 0), 0);
+}
+
+function countMatches(arr, setObj) {
+  return (arr || []).reduce((sum, item) => sum + (setObj.has(item) ? 1 : 0), 0);
+}
+
+function describeHeatDensity(detail) {
+  if (Number(detail.hotCount || 0) >= 3) return `第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`;
+  if (Number(detail.hotCount || 0) === 2) return `第${detail.groupIndex}組含 2 顆熱號，仍在可控範圍`;
+  return '';
+}
+
+
 function getAnalysisProfile(tracking) {
   const analysis = enrichAnalysisForTracking(tracking);
   const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails : [];
+  const pairWeightMap = analysis.pairWeightMap || analysis.pairCounts || {};
+  const tripleWeightMap = analysis.tripleWeightMap || analysis.tripleCounts || {};
+  const hotScoreMap = analysis.hotScoreMap || analysis.counts || {};
+  const riskySet = new Set(Array.isArray(analysis.riskyNumbers) ? analysis.riskyNumbers : []);
+  const hotSet = new Set(Array.isArray(analysis.hotNumbers) ? analysis.hotNumbers : []);
   const hotCounts = details.map(d => Number(d.hotCount || 0));
   const riskyNumberCounts = details.map(d => Array.isArray(d.riskyNumbers) ? d.riskyNumbers.length : 0);
   const riskyPairCounts = details.map(d => Array.isArray(d.riskyPairHits) ? d.riskyPairHits.length : 0);
   const riskyTripleCounts = details.map(d => Array.isArray(d.riskyTripleHits) ? d.riskyTripleHits.length : 0);
+  const pairWeights = details.map(d => sumWeights(d.riskyPairHits, pairWeightMap));
+  const tripleWeights = details.map(d => sumWeights(d.riskyTripleHits, tripleWeightMap));
+  const hotWeights = details.map(d => (Array.isArray(d.groupNumbers) ? d.groupNumbers : []).reduce((sum, n) => sum + Number(hotScoreMap[n] || 0), 0));
+  const riskyWeights = details.map(d => (Array.isArray(d.groupNumbers) ? d.groupNumbers : []).reduce((sum, n) => sum + (riskySet.has(n) ? Number(hotScoreMap[n] || 1) : 0), 0));
   const totalHot = hotCounts.reduce((a,b)=>a+b,0);
   const totalRiskyNumbers = riskyNumberCounts.reduce((a,b)=>a+b,0);
   const totalPairHits = riskyPairCounts.reduce((a,b)=>a+b,0);
   const totalTripleHits = riskyTripleCounts.reduce((a,b)=>a+b,0);
+  const totalPairWeight = pairWeights.reduce((a,b)=>a+b,0);
+  const totalTripleWeight = tripleWeights.reduce((a,b)=>a+b,0);
+  const totalHotWeight = hotWeights.reduce((a,b)=>a+b,0);
+  const totalRiskyWeight = riskyWeights.reduce((a,b)=>a+b,0);
   const hotSpreadPenalty = hotCounts.length ? Math.max(...hotCounts) - Math.min(...hotCounts) : 0;
   const denseRiskGroups = riskyNumberCounts.filter(v => v >= 2).length;
   const anyGroupHotOver = hotCounts.length ? Math.max(...hotCounts) : 0;
   const anyGroupRiskyOver = riskyNumberCounts.length ? Math.max(...riskyNumberCounts) : 0;
-  return { analysis, details, hotCounts, riskyNumberCounts, riskyPairCounts, riskyTripleCounts, totalHot, totalRiskyNumbers, totalPairHits, totalTripleHits, hotSpreadPenalty, denseRiskGroups, anyGroupHotOver, anyGroupRiskyOver };
+  return {
+    analysis,
+    details,
+    hotCounts,
+    riskyNumberCounts,
+    riskyPairCounts,
+    riskyTripleCounts,
+    pairWeights,
+    tripleWeights,
+    hotWeights,
+    riskyWeights,
+    totalHot,
+    totalRiskyNumbers,
+    totalPairHits,
+    totalTripleHits,
+    totalPairWeight,
+    totalTripleWeight,
+    totalHotWeight,
+    totalRiskyWeight,
+    hotSpreadPenalty,
+    denseRiskGroups,
+    anyGroupHotOver,
+    anyGroupRiskyOver
+  };
 }
 
 function formatRiskDetailGroup(detail) {
@@ -388,31 +439,31 @@ function formatRiskDetailGroup(detail) {
   if ((detail.riskyPairHits || []).length) parts.push(`第${detail.groupIndex}組含高風險雙號 ${detail.riskyPairHits[0]}`);
   if (riskyNums.length >= 2) parts.push(`第${detail.groupIndex}組高風險號偏多（${riskyNums.slice(0,3).join('、')}）`);
   else if (riskyNums.length === 1) parts.push(`第${detail.groupIndex}組含高風險號 ${riskyNums[0]}`);
-  if (Number(detail.hotCount || 0) >= 3) parts.push(`第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`);
+  const heatText = describeHeatDensity(detail);
+  if (heatText) parts.push(heatText);
   return parts;
 }
 
-function buildRiskNarrativeFromAnalysis(features, tracking) {
-  const { analysis, details, totalPairHits, totalTripleHits, totalRiskyNumbers, hotCounts, anyGroupRiskyOver } = getAnalysisProfile(tracking);
+function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
+  const useProfile = profile || getAnalysisProfile(tracking);
+  const { analysis, details, totalPairHits, totalTripleHits, totalRiskyNumbers, hotCounts, totalHotWeight, totalPairWeight, totalTripleWeight } = useProfile;
   const positives = [];
   const negatives = [];
   if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || 50}期資料檢查主四組碰撞風險`);
   if (totalTripleHits === 0) positives.push('主四組未落入高風險三連號同組');
   if (totalPairHits === 0) positives.push('主四組未命中高風險雙號同組');
-  else if (totalPairHits <= 1) positives.push('主四組高風險雙號控制在低水位');
+  else if (totalPairWeight <= 4) positives.push('主四組高風險雙號控制在低水位');
   if (hotCounts.length && Math.max(...hotCounts) <= 2) positives.push('熱號已拆分配置於不同分組');
   if (features.fullCoverage === 19) positives.push('全車19顆完整承接補位號碼');
 
   for (const detail of details) negatives.push(...formatRiskDetailGroup(detail));
 
   if (!negatives.length) {
-    if (totalPairHits === 0 && totalTripleHits === 0 && totalRiskyNumbers <= 3) {
-      negatives.push('主四組未見明顯高風險碰撞，整體配置偏穩');
-    } else if (anyGroupRiskyOver >= 2) {
-      negatives.push('個別分組高風險號密度偏高，建議持續留意');
-    } else {
-      negatives.push('主四組僅有輕微風險暴露，暫不影響整體判讀');
-    }
+    if (totalPairHits === 0 && totalTripleHits === 0 && totalRiskyNumbers <= 2) negatives.push('主四組未見明顯高風險碰撞，整體配置偏穩');
+    else if (totalTripleWeight > 0) negatives.push('主四組已出現三連碰撞權重，需留意單組集中');
+    else if (totalPairWeight > 0) negatives.push('主四組存在少量雙號碰撞，但仍維持可控');
+    else if (totalHotWeight >= 28) negatives.push('主四組熱號權重偏高，建議持續留意熱度集中');
+    else negatives.push('主四組僅有輕微風險暴露，暫不影響整體判讀');
   }
   return { positives: dedupeLabels(positives), negatives: dedupeLabels(negatives) };
 }
@@ -422,46 +473,92 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   const total = Number(bucket.total || 0);
   const features = buildFeatureSnapshot(tracking);
   const profile = getAnalysisProfile(tracking);
-  const { analysis, hotCounts, riskyNumberCounts, totalPairHits, totalTripleHits, totalRiskyNumbers, hotSpreadPenalty, denseRiskGroups, anyGroupHotOver, anyGroupRiskyOver } = profile;
+  const {
+    analysis,
+    details,
+    hotCounts,
+    riskyNumberCounts,
+    riskyPairCounts,
+    riskyTripleCounts,
+    pairWeights,
+    tripleWeights,
+    hotWeights,
+    riskyWeights,
+    totalPairHits,
+    totalTripleHits,
+    totalRiskyNumbers,
+    totalPairWeight,
+    totalTripleWeight,
+    totalHotWeight,
+    totalRiskyWeight,
+    hotSpreadPenalty,
+    denseRiskGroups,
+    anyGroupHotOver,
+    anyGroupRiskyOver
+  } = profile;
 
   const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.55;
-  const weightedRisk = riskyNumberCounts.reduce((sum, v, idx) => sum + (v * 8) + (riskyPairCounts[idx] * 14) + (riskyTripleCounts[idx] * 24) + Math.max(0, hotCounts[idx] - 2) * 6, 0);
-  let structurePenalty = weightedRisk / 100;
-  structurePenalty += Math.max(0, hotSpreadPenalty - 1) * 0.01;
-  if (features.fullCoverage !== 19) structurePenalty += 0.02;
+  const structuralRisk = details.reduce((sum, d, idx) => {
+    const hotPenalty = Math.max(0, hotCounts[idx] - 2) * 5;
+    const pairPenalty = Number(pairWeights[idx] || 0) * 6 + Number(riskyPairCounts[idx] || 0) * 4;
+    const triplePenalty = Number(tripleWeights[idx] || 0) * 11 + Number(riskyTripleCounts[idx] || 0) * 12;
+    const riskyPenalty = Number(riskyWeights[idx] || 0) * 0.8 + Number(riskyNumberCounts[idx] || 0) * 3;
+    return sum + hotPenalty + pairPenalty + triplePenalty + riskyPenalty;
+  }, 0);
 
-  let tendency = basePass + 0.22 - structurePenalty;
-  tendency = Math.max(0.32, Math.min(0.90, tendency));
+  let tendency = basePass * 100;
+  tendency += 18;
+  tendency -= structuralRisk * 0.35;
+  tendency -= Math.max(0, hotSpreadPenalty - 1) * 3;
+  tendency -= Math.max(0, anyGroupHotOver - 2) * 4;
+  tendency -= Math.max(0, anyGroupRiskyOver - 1) * 5;
+  tendency = Math.max(35, Math.min(92, tendency));
 
-  let severeRisk = 0.05 + totalPairHits * 0.03 + totalTripleHits * 0.08 + Math.max(0, totalRiskyNumbers - 2) * 0.008 + denseRiskGroups * 0.01;
-  severeRisk = Math.max(0.02, Math.min(0.50, severeRisk));
-  let retryRate = 1 - tendency - severeRisk;
-  retryRate = Math.max(0.05, Math.min(0.55, retryRate));
+  let severeRisk = 6;
+  severeRisk += totalPairWeight * 1.8;
+  severeRisk += totalTripleWeight * 3.5;
+  severeRisk += Math.max(0, totalRiskyNumbers - 2) * 1.2;
+  severeRisk += denseRiskGroups * 2;
+  severeRisk = Math.max(3, Math.min(55, severeRisk));
 
-  let reliability = 50 + Math.min(total, 50) * 0.2 + Math.min(Number(analysis.drawCount || 0), 50) * 0.12;
-  reliability -= weightedRisk * 0.18;
-  reliability = Math.max(35, Math.min(90, reliability));
+  let retryRate = 100 - tendency - severeRisk;
+  retryRate = Math.max(5, Math.min(55, retryRate));
+
+  let reliability = 52 + Math.min(total, 50) * 0.15 + Math.min(Number(analysis.drawCount || 0), 50) * 0.18;
+  reliability -= severeRisk * 0.15;
+  reliability += Math.max(0, 4 - denseRiskGroups) * 1.5;
+  reliability = Math.max(35, Math.min(88, reliability));
 
   let riskLevel = '低';
-  if (weightedRisk >= 55 || totalTripleHits >= 1 || anyGroupRiskyOver >= 4) riskLevel = '高';
-  else if (weightedRisk >= 25 || totalPairHits >= 1 || anyGroupRiskyOver >= 2 || anyGroupHotOver >= 3) riskLevel = '中';
+  if (totalTripleWeight >= 4 || totalPairWeight >= 10 || anyGroupRiskyOver >= 3) riskLevel = '高';
+  else if (totalTripleWeight >= 2 || totalPairWeight >= 4 || anyGroupHotOver >= 3 || anyGroupRiskyOver >= 2) riskLevel = '中';
 
-  const score = Math.round(tendency * 100 - severeRisk * 25 + reliability * 0.15);
-  const narrative = buildRiskNarrativeFromAnalysis(features, tracking);
+  const score = Math.round(tendency - severeRisk * 0.4 + reliability * 0.2);
+  const narrative = buildRiskNarrativeFromAnalysis(features, tracking, profile);
 
   return {
     trackingId: tracking.id || '',
     trackType: tracking.trackType || 'system',
     sourceName: tracking.sourceName || '',
-    passTendency: Number((tendency * 100).toFixed(1)),
-    predictedRetryRate: Number((retryRate * 100).toFixed(1)),
-    predictedX33Rate: Number((severeRisk * 100).toFixed(1)),
+    passTendency: Number(tendency.toFixed(1)),
+    predictedRetryRate: Number(retryRate.toFixed(1)),
+    predictedX33Rate: Number(severeRisk.toFixed(1)),
     riskLevel,
     reliability: Number(reliability.toFixed(1)),
     score,
     positives: narrative.positives.slice(0, 4),
     negatives: narrative.negatives.slice(0, 4),
-    features
+    features,
+    debug: {
+      totalPairHits,
+      totalTripleHits,
+      totalPairWeight,
+      totalTripleWeight,
+      totalHotWeight,
+      totalRiskyWeight,
+      hotCounts,
+      riskyNumberCounts
+    }
   };
 }
 
