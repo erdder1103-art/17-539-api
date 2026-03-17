@@ -299,6 +299,163 @@
   $("btnSummaryClose").addEventListener("click", hideSummary);
   $("summaryOverlay").addEventListener("click", (e)=>{ if(e.target.id === "summaryOverlay") hideSummary(); });
 
+
+  const searchAnimState = { visible:false, running:false, locked:false, lastStep:0, lastSpin:0, timers:[] };
+
+  function getSearchEls(){
+    return {
+      overlay: $("searchOverlay"),
+      title: $("searchTitle"),
+      sub: $("searchSub"),
+      pill: $("searchStatusPill"),
+      fill: $("searchBarFill"),
+      searched: $("searchStatSearched"),
+      target: $("searchStatTarget"),
+      stage: $("searchStatStage"),
+      elapsed: $("searchStatElapsed"),
+      eta: $("searchStatEta"),
+      grid: $("searchGrid"),
+      footer: $("searchFooterText")
+    };
+  }
+
+  function clearSearchTimers(){
+    while(searchAnimState.timers.length){
+      clearTimeout(searchAnimState.timers.pop());
+    }
+  }
+
+  function makeSearchCard(name, idx){
+    const wrap = document.createElement('div');
+    wrap.className = 'searchGroupCard';
+    wrap.id = `searchCard_${idx}`;
+    wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div>`;
+    return wrap;
+  }
+
+  function openSearchOverlay(id){
+    const els = getSearchEls();
+    const names = [
+      $(`${id}_prize1Desc`).value.trim() || '第一組',
+      $(`${id}_prize2Desc`).value.trim() || '第二組',
+      $(`${id}_prize3Desc`).value.trim() || '第三組',
+      $(`${id}_prize4Desc`).value.trim() || '第四組',
+      $(`${id}_prize5Desc`).value.trim() || '全車號碼'
+    ];
+    els.grid.innerHTML = '';
+    names.forEach((name, idx)=> els.grid.appendChild(makeSearchCard(name, idx)));
+    els.title.textContent = `${state.lotteries[id].cfg.title}｜低風險方案搜尋中`;
+    els.sub.textContent = '系統會先搜尋第一組合格方案，找到後依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
+    els.pill.textContent = '搜尋中';
+    els.fill.style.width = '0%';
+    els.searched.textContent = '0';
+    els.target.textContent = '0';
+    els.stage.textContent = '初始化';
+    els.elapsed.textContent = '0.0 秒';
+    els.eta.textContent = '估算中';
+    els.footer.textContent = '搜尋開始後會持續跳號，找到第一組合格低風險方案就立即停下來鎖定。';
+    els.overlay.classList.add('show');
+    els.overlay.setAttribute('aria-hidden','false');
+    searchAnimState.visible = true;
+    searchAnimState.running = true;
+    searchAnimState.locked = false;
+    searchAnimState.lastStep = Date.now();
+    searchAnimState.lastSpin = Date.now();
+  }
+
+  function closeSearchOverlay(force=false){
+    const els = getSearchEls();
+    if(!force && searchAnimState.running) return;
+    clearSearchTimers();
+    els.overlay.classList.remove('show');
+    els.overlay.setAttribute('aria-hidden','true');
+    searchAnimState.visible = false;
+  }
+
+  function randomFive(maxNum){
+    const arr = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+    return shuffle(arr).slice(0,5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+  }
+
+  function randomFull(maxNum){
+    const arr = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+    return shuffle(arr).slice(0,19).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+  }
+
+  function spinSearchCards(id){
+    if(!searchAnimState.visible || searchAnimState.locked) return;
+    const maxNum = state.lotteries[id].cfg.maxNum;
+    for(let i=0;i<5;i++){
+      const numsEl = $(`searchNums_${i}`);
+      const hintEl = $(`searchHint_${i}`);
+      const badgeEl = $(`searchBadge_${i}`);
+      const cardEl = $(`searchCard_${i}`);
+      if(!numsEl || cardEl?.classList.contains('locked')) continue;
+      const nums = i < 4 ? randomFive(maxNum) : randomFull(maxNum);
+      numsEl.textContent = nums.join('、');
+      hintEl.textContent = i < 4 ? '跳號比對高風險雙號 / 三號與熱號集中...' : '保留高風險熱號作為全車緩衝池...';
+      badgeEl.textContent = '搜尋中';
+      cardEl.classList.add('active');
+    }
+  }
+
+  function updateSearchOverlay(id, progress){
+    if(!searchAnimState.visible) openSearchOverlay(id);
+    const els = getSearchEls();
+    const searched = progress?.searched || 0;
+    const target = progress?.target || 0;
+    const elapsedMs = progress?.elapsedMs || 0;
+    const percent = target > 0 ? Math.min(100, (searched / target) * 100) : 0;
+    const rate = elapsedMs > 0 ? searched / (elapsedMs / 1000) : 0;
+    const remaining = Math.max(0, target - searched);
+    const etaMs = rate > 0 ? (remaining / rate) * 1000 : NaN;
+    els.fill.style.width = `${percent}%`;
+    els.searched.textContent = searched.toLocaleString();
+    els.target.textContent = target.toLocaleString();
+    els.stage.textContent = progress?.stageLabel || '搜尋候選中';
+    els.elapsed.textContent = `${(elapsedMs / 1000).toFixed(1)} 秒`;
+    els.eta.textContent = formatEta(etaMs);
+    els.pill.textContent = progress?.statusText || '搜尋中';
+    els.footer.textContent = progress?.footerText || '只要找到第一組合格低風險方案，就會立即停止並開始鎖定各組號碼。';
+    const now = Date.now();
+    if(now - searchAnimState.lastSpin > 120){
+      spinSearchCards(id);
+      searchAnimState.lastSpin = now;
+    }
+  }
+
+  async function lockSearchResult(id, bestResult){
+    const names = Object.keys(bestResult.groups || {});
+    searchAnimState.locked = true;
+    searchAnimState.running = false;
+    const els = getSearchEls();
+    els.pill.textContent = '已找到';
+    els.stage.textContent = '依序鎖定各組';
+    els.footer.textContent = '已找到第一組合格低風險方案，正在依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
+    for(let i=0;i<names.length;i++){
+      const cardEl = $(`searchCard_${i}`);
+      const numsEl = $(`searchNums_${i}`);
+      const hintEl = $(`searchHint_${i}`);
+      const badgeEl = $(`searchBadge_${i}`);
+      const nums = bestResult.groups[names[i]] || [];
+      if(cardEl){
+        cardEl.classList.remove('active');
+        cardEl.classList.add('locked');
+      }
+      if(numsEl){ numsEl.classList.remove('spinPulse'); numsEl.textContent = nums.join('、'); }
+      if(hintEl){ hintEl.textContent = i < 4 ? '已鎖定，可進入下一組搜尋' : '全車號碼已鎖定，可直接確認通報'; }
+      if(badgeEl){ badgeEl.textContent = '已鎖定'; }
+      els.stage.textContent = `已鎖定 ${names[i]}`;
+      await sleep(320);
+    }
+    els.pill.textContent = '可通報';
+    els.stage.textContent = '全部鎖定完成';
+    els.footer.textContent = '全部組別已鎖定完成，現在可以直接按「確認通報」。';
+  }
+
+  $("searchCloseBtn").addEventListener("click", ()=>closeSearchOverlay());
+  $("searchOverlay").addEventListener("click", (e)=>{ if(e.target.id === "searchOverlay") closeSearchOverlay(); });
+
   function cleanupNumbers(arr, maxNum){
     return [...new Set(
       arr.map(n => String(parseInt(n,10)).padStart(2,"0"))
@@ -1165,7 +1322,7 @@
       }
       searched = upper;
       const elapsedMs = Date.now() - startedAt;
-      if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0 });
+      if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0, stageLabel: searched < target * 0.25 ? '建立第一組候選' : searched < target * 0.5 ? '建立第二組候選' : searched < target * 0.75 ? '建立第三、四組候選' : '建立全車與最終驗證', statusText: '搜尋中', footerText: '系統正在跳號比對高風險雙號 / 三號、熱號集中與全車承接策略。' });
       await sleep(0);
     }
 
@@ -1204,6 +1361,7 @@
       <div class="groupRow"><b>預估剩餘</b><span style="color:#ffe7a8;">${formatEta(etaMs)}</span></div>
       <div style="margin-top:10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;overflow:hidden;height:12px;background:rgba(255,255,255,.08);"><div style="width:${percent}%;height:100%;background:linear-gradient(90deg,#e0a83d,#f4d27a);"></div></div>
     `;
+    updateSearchOverlay(id, { ...progress, stageLabel: progress?.stageLabel || "搜尋候選中", statusText: progress?.statusText || "搜尋中", footerText: progress?.footerText || "只要找到第一組合格低風險方案，就會立即停止並開始鎖定各組號碼。" });
   }
 
   function renderGroupPreview(id, bestResult){
@@ -2150,18 +2308,22 @@ function bindEvents(id){
       const originalText = btn.textContent;
       btn.textContent = '搜尋低風險中...';
       setConfirmAvailability(id, false, "系統正在搜尋合格低風險方案");
-      renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: 0 });
+      openSearchOverlay(id);
+      renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: 0, stageLabel: '初始化', statusText: '搜尋中', footerText: '系統會先找第一組，再依序鎖定第二組、第三組、第四組與全車號碼。' });
       try {
         const bestResult = await buildSmartGroups(id, analysis, (progress)=>renderSearchProgress(id, progress));
         if(!bestResult || bestResult.noQualifiedResult){
           state.lotteries[id].generatedGroups = null;
           getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>低風險方案不足</b><span style="color:#ffd8a8;">本次已自動分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案，因此不顯示、不開放通報。</span></div>`;
+          updateSearchOverlay(id, { searched: bestResult?.searchedCandidates || 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: bestResult?.elapsedMs || 0, stageLabel: '未找到合格方案', statusText: '本輪失敗', footerText: `本輪已分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案。` });
+          searchAnimState.running = false;
           setConfirmAvailability(id, false, "未找到合格低風險方案");
           showMiniNotice(`${state.lotteries[id].cfg.title}：未找到合格低風險方案，本次不顯示也不開放通報`, "warn");
           persistAll();
           return;
         }
         state.lotteries[id].generatedGroups = bestResult;
+        await lockSearchResult(id, bestResult);
         renderGroupPreview(id, bestResult);
         applyGeneratedGroupsToLog(id, bestResult.groups);
         setConfirmAvailability(id, true);
