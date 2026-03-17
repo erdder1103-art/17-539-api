@@ -1585,7 +1585,7 @@
     return { total, twoHitRisk, threeHitRisk };
   }
 
-  async function buildSmartGroups(id, analysis){
+  async function buildSmartGroups(id, analysis, onProgress){
     const maxNum = state.lotteries[id].cfg.maxNum;
     const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, "0"));
 
@@ -1597,13 +1597,14 @@
       $(`${id}_prize5Desc`).value.trim() || "全車號碼"
     ];
 
-    const plan = getEscalatingTryPlan(analysis.drawCount || 0);
-    let cumulative = 0;
-    let bestLowRisk = null;
+    const target = chooseAdaptiveTries(analysis.drawCount || 0);
+    const chunkSize = 800;
+    const startedAt = Date.now();
+    let searched = 0;
 
-    for (const tries of plan) {
-      const batch = Math.max(0, tries - cumulative);
-      for(let t=0; t<batch; t++){
+    while (searched < target) {
+      const upper = Math.min(target, searched + chunkSize);
+      for(let t=searched; t<upper; t++){
         const shuffled = shuffle(allNums);
         const g1 = shuffled.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
         const g2 = shuffled.slice(5, 10).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
@@ -1614,7 +1615,8 @@
         const validation = buildStrictValidation({ [groupNames[0]]: g1, [groupNames[1]]: g2, [groupNames[2]]: g3, [groupNames[3]]: g4, [groupNames[4]]: g5 });
         if (!validation.ok) continue;
         const evalResult = evaluatePartition(firstFour, analysis);
-        const candidate = {
+        const elapsedMs = Date.now() - startedAt;
+        return {
           score: evalResult.total,
           twoHitRisk: evalResult.twoHitRisk,
           threeHitRisk: evalResult.threeHitRisk,
@@ -1622,10 +1624,11 @@
           mediumRiskGroups: 0,
           rejectedGroups: 0,
           analyzedDrawCount: analysis.drawCount || 0,
-          generatedTryCount: tries,
-          searchedCandidates: tries,
+          generatedTryCount: t + 1,
+          searchedCandidates: t + 1,
           selectedPool: 'low',
           downgraded: false,
+          elapsedMs,
           groups: {
             [groupNames[0]]: g1,
             [groupNames[1]]: g2,
@@ -1634,23 +1637,49 @@
             [groupNames[4]]: g5
           }
         };
-        if(!bestLowRisk || candidate.score < bestLowRisk.score) bestLowRisk = candidate;
       }
-      cumulative = tries;
-      if (bestLowRisk) return bestLowRisk;
+      searched = upper;
+      const elapsedMs = Date.now() - startedAt;
+      if (typeof onProgress === 'function') onProgress({ searched, target, elapsedMs, lowRiskFound: 0 });
       await sleep(0);
     }
 
     return {
       noQualifiedResult: true,
       analyzedDrawCount: analysis.drawCount || 0,
-      generatedTryCount: cumulative,
-      searchedCandidates: cumulative,
+      generatedTryCount: searched,
+      searchedCandidates: searched,
       lowRiskGroups: 0,
-      selectedPool: 'none'
+      selectedPool: 'none',
+      elapsedMs: Date.now() - startedAt
     };
   }
 
+
+  function formatEta(ms){
+    if (!Number.isFinite(ms) || ms <= 0) return '估算中';
+    if (ms < 1000) return `${Math.max(1, Math.round(ms))} ms`;
+    return `${(ms / 1000).toFixed(1)} 秒`;
+  }
+
+  function renderSearchProgress(id, progress){
+    const box = getEls(id).groupPreview;
+    const searched = progress?.searched || 0;
+    const target = progress?.target || 0;
+    const elapsedMs = progress?.elapsedMs || 0;
+    const percent = target > 0 ? Math.min(100, (searched / target) * 100) : 0;
+    const rate = elapsedMs > 0 ? searched / (elapsedMs / 1000) : 0;
+    const remaining = target > searched ? target - searched : 0;
+    const etaMs = rate > 0 ? (remaining / rate) * 1000 : NaN;
+    box.innerHTML = `
+      <div class="groupRow"><b>搜尋中</b><span style="color:#ffe7a8;">系統正在自動搜尋合格低風險方案，找到第一組合格候選就會立即停止並開放通報。</span></div>
+      <div class="groupRow"><b>已分析</b><span style="color:#ffe7a8;">${searched.toLocaleString()} / ${target.toLocaleString()} 候選（${percent.toFixed(1)}%）</span></div>
+      <div class="groupRow"><b>目前檢查</b><span style="color:#ffe7a8;">連號、十位區、尾數、奇偶、跨度</span></div>
+      <div class="groupRow"><b>已耗時</b><span style="color:#ffe7a8;">${(elapsedMs / 1000).toFixed(1)} 秒</span></div>
+      <div class="groupRow"><b>預估剩餘</b><span style="color:#ffe7a8;">${formatEta(etaMs)}</span></div>
+      <div style="margin-top:10px;border:1px solid rgba(255,255,255,.12);border-radius:999px;overflow:hidden;height:12px;background:rgba(255,255,255,.08);"><div style="width:${percent}%;height:100%;background:linear-gradient(90deg,#e0a83d,#f4d27a);"></div></div>
+    `;
+  }
 
   function renderGroupPreview(id, bestResult){
     const box = getEls(id).groupPreview;
@@ -2591,15 +2620,30 @@ function bindEvents(id){
       state.lotteries[id].historyAnalysis = analysis;
       renderHistoryAnalysis(id, analysis);
 
-      const bestResult = buildSmartGroups(id, analysis);
-      state.lotteries[id].generatedGroups = bestResult;
-      renderGroupPreview(id, bestResult);
-      applyGeneratedGroupsToLog(id, bestResult.groups);
-
-      if(bestResult.twoHitRisk === 0 && bestResult.threeHitRisk === 0){
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到歷史上 2 顆 / 3 顆碰撞都為 0 的分組`, "ok");
-      }else{
-        showMiniNotice(`${state.lotteries[id].cfg.title}：已生成目前最佳方案，2碰撞=${bestResult.twoHitRisk}，3碰撞=${bestResult.threeHitRisk}`, "info");
+      const btn = $(`${id}_btnGenerateSmart`);
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = '搜尋低風險中...';
+      setConfirmAvailability(id, false, "系統正在搜尋合格低風險方案");
+      renderSearchProgress(id, { searched: 0, target: chooseAdaptiveTries(analysis.drawCount || 0), elapsedMs: 0 });
+      try {
+        const bestResult = await buildSmartGroups(id, analysis, (progress)=>renderSearchProgress(id, progress));
+        if(!bestResult || bestResult.noQualifiedResult){
+          state.lotteries[id].generatedGroups = null;
+          getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>低風險方案不足</b><span style="color:#ffd8a8;">本次已自動分析 ${bestResult?.searchedCandidates || 0} 組候選，仍未找到合格低風險方案，因此不顯示、不開放通報。</span></div>`;
+          setConfirmAvailability(id, false, "未找到合格低風險方案");
+          showMiniNotice(`${state.lotteries[id].cfg.title}：未找到合格低風險方案，本次不顯示也不開放通報`, "warn");
+          persistAll();
+          return;
+        }
+        state.lotteries[id].generatedGroups = bestResult;
+        renderGroupPreview(id, bestResult);
+        applyGeneratedGroupsToLog(id, bestResult.groups);
+        setConfirmAvailability(id, true);
+        showMiniNotice(`${state.lotteries[id].cfg.title}：已找到第一組合格低風險方案，可直接通報`, "ok");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     });
 
