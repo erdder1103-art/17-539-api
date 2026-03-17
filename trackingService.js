@@ -7,6 +7,7 @@ const {
   normalizeLotteryType
 } = require('./trackingStore');
 const { formatTaipeiCompact, formatTaipeiDateTime } = require('./utils/time');
+const { buildNextIssue } = require('./resultService');
 
 const inflightByKey = new Map();
 const FULL_GROUP_SIZE = 19;
@@ -88,7 +89,9 @@ function validatePayload(payload) {
       group4: '第四組',
       full: '全車號碼'
     },
-    groups
+    groups,
+    baseIssue: String(payload.baseIssue || payload.latestIssue || '').trim(),
+    startFromIssue: String(payload.startFromIssue || '').trim()
   };
 }
 
@@ -113,18 +116,24 @@ function validateManualPayload(payload) {
       group4: '第四組',
       full: '全車號碼'
     },
-    groups
+    groups,
+    baseIssue: String(payload.baseIssue || payload.latestIssue || '').trim(),
+    startFromIssue: String(payload.startFromIssue || '').trim()
   };
 }
 
 function buildTrackingRecord(input) {
   const now = formatTaipeiDateTime();
+  const baseIssue = String(input.baseIssue || '').trim();
+  const startFromIssue = String(input.startFromIssue || buildNextIssue(baseIssue) || '').trim();
   return {
     id: `${input.lotteryType}_${input.trackType}_${nowIsoId()}`,
     lotteryType: input.lotteryType,
     lotteryTitle: input.lotteryTitle,
     confirmedAt: now,
     createdAt: now,
+    baseIssue,
+    startFromIssue,
     status: 'pending',
     trackType: input.trackType || 'system',
     sourceName: input.sourceName || '',
@@ -152,6 +161,7 @@ function buildCreatedMessage(record) {
     ...(record.trackType === 'manual' ? [] : ['追蹤類型：系統生成']),
     `通報來源：${record.sourceName || '未命名通報'}`,
     `通報時間：${record.confirmedAt}`,
+    ...(record.startFromIssue ? [`生效期數：${record.startFromIssue}`] : []),
     '',
     ...linesForGroups(record)
   ];
@@ -180,6 +190,7 @@ function buildUpdatedMessage(record) {
     `追蹤類型：${record.trackType === 'manual' ? '手動追蹤' : '系統生成'}`,
     `通報來源：${record.sourceName || '未命名通報'}`,
     `更新時間：${record.confirmedAt}`,
+    ...(record.startFromIssue ? [`生效期數：${record.startFromIssue}`] : []),
     '',
     ...linesForGroups(record)
   ];

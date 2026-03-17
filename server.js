@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview } = require('./trackingService');
 const { getActiveTrackings } = require('./trackingStore');
-const { processTrackingResult, getResultHistory, getLearningState, getRecommendations } = require('./resultService');
+const { processTrackingResult, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
 const { getBotRuntimeSummary, testTelegramSend } = require('./telegram');
@@ -187,6 +187,24 @@ async function updateAll() {
   }
 }
 
+
+function getLatestIssueByType(type) {
+  const key = type === 'ttl' ? 'ttl' : '539';
+  const list = key === 'ttl' ? cacheTTL : cache539;
+  return list[0] ? String(list[0].issue || '') : '';
+}
+function withIssueContext(body = {}) {
+  const lotteryType = body.lotteryType === 'ttl' ? 'ttl' : '539';
+  const latestIssue = getLatestIssueByType(lotteryType);
+  return {
+    ...body,
+    lotteryType,
+    latestIssue,
+    baseIssue: body.baseIssue || latestIssue,
+    startFromIssue: body.startFromIssue || buildNextIssue(body.baseIssue || latestIssue)
+  };
+}
+
 function scheduleNextUpdate() {
   if (updateTimer) clearTimeout(updateTimer);
   updateTimer = setTimeout(async () => {
@@ -225,8 +243,10 @@ function getHealthSnapshot() {
 app.get('/api/health', (req, res) => res.json(getHealthSnapshot()));
 app.get('/api/bot/runtime', (req, res) => res.json({ ok: true, ...getBotInteractionState() }));
 app.get('/api/debug/storage', (req, res) => res.json({ ok: true, storage: getStorageDebug() }));
-app.get('/api/weekly/539', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('539'), text: buildWeeklySummaryText('539') }));
-app.get('/api/weekly/ttl', (req, res) => res.json({ ok: true, weekly: getWeeklyStats('ttl'), text: buildWeeklySummaryText('ttl') }));
+app.get('/api/weekly/539', (req, res) => res.json(getRangeSummary({ preset: 'this_week' })));
+app.get('/api/weekly/ttl', (req, res) => res.json(getRangeSummary({ preset: 'this_week' })));
+app.get('/api/results/range', (req, res) => res.json(getRangeSummary({ startDate: req.query.start, endDate: req.query.end, preset: req.query.preset })));
+app.get('/api/analysis/compare-active/:type', (req, res) => res.json(compareActiveTrackings(req.params.type)));
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
@@ -278,14 +298,14 @@ app.post('/api/telegram/test', async (req, res) => {
 });
 app.post('/api/confirm-tracking', async (req, res) => {
   try {
-    const result = await confirmTracking(req.body || {});
+    const result = await confirmTracking(withIssueContext(req.body || {}));
     res.json(result);
   }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }
 });
 app.post('/api/manual-tracking', async (req, res) => {
   try {
-    const result = await confirmManualTracking(req.body || {});
+    const result = await confirmManualTracking(withIssueContext(req.body || {}));
     res.json(result);
   }
   catch (err) { res.status(400).json({ ok: false, message: err.message }); }

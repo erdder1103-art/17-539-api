@@ -2445,9 +2445,9 @@
           .join('<br>');
         const rec = recommendMap.get(row.id || '');
         const recHtml = rec ? `<div class="stats" style="margin-top:8px;">
-          <div class="stat"><b>預估過關率</b><span>${escapeHtml(String(rec.predictedPassRate))}%</span></div>
+          <div class="stat"><b>過關傾向</b><span>${escapeHtml(String(rec.passTendency ?? rec.predictedPassRate))}%</span></div>
           <div class="stat"><b>風險等級</b><span>${escapeHtml(rec.riskLevel || '-')}</span></div>
-          <div class="stat"><b>信心值</b><span>${escapeHtml(String(rec.confidence || '-'))}</span></div>
+          <div class="stat"><b>分析可靠度</b><span>${escapeHtml(String(rec.reliability ?? rec.confidence || '-'))}</span></div>
         </div>
         <div class="small" style="margin-top:8px;">正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
         return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div>${recHtml}<div class="btns" style="margin-top:8px;"><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
