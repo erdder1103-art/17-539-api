@@ -92,7 +92,8 @@ function validatePayload(payload) {
     },
     groups,
     baseIssue: String(payload.baseIssue || payload.latestIssue || '').trim(),
-    startFromIssue: String(payload.startFromIssue || '').trim()
+    startFromIssue: String(payload.startFromIssue || '').trim(),
+    analysis: payload.analysis || null
   };
 }
 
@@ -119,7 +120,8 @@ function validateManualPayload(payload) {
     },
     groups,
     baseIssue: String(payload.baseIssue || payload.latestIssue || '').trim(),
-    startFromIssue: String(payload.startFromIssue || '').trim()
+    startFromIssue: String(payload.startFromIssue || '').trim(),
+    analysis: payload.analysis || null
   };
 }
 
@@ -139,7 +141,8 @@ function buildTrackingRecord(input) {
     trackType: input.trackType || 'system',
     sourceName: input.sourceName || '',
     labels: input.labels,
-    groups: input.groups
+    groups: input.groups,
+    analysis: input.analysis || null
   };
 }
 

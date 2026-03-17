@@ -324,98 +324,67 @@ function dedupeLabels(arr) {
   return out;
 }
 
+
+function formatRiskDetailGroup(detail) {
+  const parts = [];
+  if ((detail.riskyTripleHits || []).length) parts.push(`第${detail.groupIndex}組含高風險三連號 ${detail.riskyTripleHits[0]}`);
+  if ((detail.riskyPairHits || []).length) parts.push(`第${detail.groupIndex}組含高風險雙號 ${detail.riskyPairHits[0]}`);
+  if ((detail.riskyNumbers || []).length >= 3) parts.push(`第${detail.groupIndex}組高風險號偏多（${detail.riskyNumbers.slice(0,3).join('、')}）`);
+  if (Number(detail.hotCount || 0) >= 3) parts.push(`第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`);
+  return parts;
+}
+
+function buildRiskNarrativeFromAnalysis(features, tracking) {
+  const analysis = tracking.analysis || {};
+  const positives = [];
+  const negatives = [];
+  const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails : [];
+  if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || 50}期資料避開主要碰撞組合`);
+  if (Number(analysis.threeHitRisk || 0) === 0) positives.push('四組未落入高風險三連號同組');
+  if (Number(analysis.twoHitRisk || 0) <= 1) positives.push('主四組高風險雙號控制在低水位');
+  const hotCounts = details.map(d => Number(d.hotCount || 0));
+  if (hotCounts.length && Math.max(...hotCounts) <= 2) positives.push('熱號已分散配置於不同分組');
+  if (features.fullCoverage === 19) positives.push('全車19顆完整承接補位號碼');
+
+  for (const detail of details) negatives.push(...formatRiskDetailGroup(detail));
+
+  if (!negatives.length) {
+    if (Number(analysis.twoHitRisk || 0) === 0 && Number(analysis.threeHitRisk || 0) === 0) {
+      negatives.push('主四組未見明顯高風險雙號 / 三連號同組');
+    } else if (Number(analysis.twoHitRisk || 0) > 0) {
+      negatives.push(`主四組仍有 ${analysis.twoHitRisk} 組高風險雙號需留意`);
+    }
+  }
+  return { positives: dedupeLabels(positives), negatives: dedupeLabels(negatives) };
+}
+
 function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   const bucket = (learningState && learningState.system) || DEFAULT_LEARNING_BUCKET;
   const total = Number(bucket.total || 0);
   const features = buildFeatureSnapshot(tracking);
+  const analysis = tracking.analysis || {};
+
   let score = 0;
-  const positives = [];
-  const negatives = [];
-
-  if (features.lowRiskGroupCount === 4) {
-    score += 14;
-    positives.push('四組皆為低風險');
-  } else if (features.lowRiskGroupCount >= 3) {
-    score += 6;
-    positives.push('多數分組為低風險');
-  } else {
-    score -= 14;
-    negatives.push('低風險組數不足');
-  }
-  if (features.rejectedGroupCount === 0) {
-    score += 6;
-    positives.push('分組結構穩定');
-  } else {
-    score -= 16;
-    negatives.push('分組存在高風險結構');
-  }
-  if (features.maxGroupAdjacent <= 1) {
-    score += 5;
-    positives.push('連號控制穩定');
-  } else {
-    score -= 7;
-    negatives.push('連號偏多');
-  }
-  if (features.maxGroupTailCount <= 1) {
-    score += 5;
-    positives.push('尾數分散');
-  } else {
-    score -= 8;
-    negatives.push('尾數過度集中');
-  }
-  if (features.maxGroupTensCount <= 2) {
-    score += 4;
-    positives.push('十位區分布較平均');
-  } else {
-    score -= 6;
-    negatives.push('十位區過度集中');
-  }
-  if (Math.abs(features.oddCount - features.evenCount) <= 4) {
-    score += 4;
-    positives.push('奇偶平衡');
-  } else {
-    score -= 4;
-    negatives.push('奇偶失衡');
-  }
-  if (features.fullCoverage === 19) {
-    score += 4;
-    positives.push('全車號碼完整');
-  } else {
-    score -= 10;
-    negatives.push('全車號碼不足19顆');
-  }
-
-  for (const [name, value] of Object.entries(features)) {
-    const valueKey = Array.isArray(value) ? value.join(',') : String(value);
-    const stat = bucket.featureStats?.[name]?.[valueKey];
-    if (!stat || !stat.total || stat.total < 2) continue;
-    const passRate = (stat.labels['恭喜過關'] || 0) / stat.total;
-    const badRate = ((stat.labels['再接再厲'] || 0) + (stat.labels['靠3.3倍'] || 0)) / stat.total;
-    const impact = Math.max(-5, Math.min(5, Math.round((passRate - badRate) * Math.min(stat.total, 6))));
-    score += impact;
-    if (impact >= 2) positives.push(featureLabel(name, valueKey));
-    if (impact <= -2) negatives.push(featureLabel(name, valueKey));
+  score += Math.max(0, 12 - Number(analysis.twoHitRisk || 0) * 8);
+  score += Math.max(0, 14 - Number(analysis.threeHitRisk || 0) * 12);
+  if (features.fullCoverage === 19) score += 6;
+  if (Array.isArray(analysis.riskGroupDetails)) {
+    const hotCounts = analysis.riskGroupDetails.map(d => Number(d.hotCount || 0));
+    if (hotCounts.length) score += Math.max(0, 8 - Math.max(...hotCounts) * 2);
   }
 
   const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.55;
-  const tendency = Math.max(0.35, Math.min(0.78, basePass + score / 140));
-  const severeRatio = total ? (bucket.labels['靠3.3倍'] || 0) / total : 0.18;
-  const structuralPenalty = features.rejectedGroupCount > 0 ? 0.12 : features.lowRiskGroupCount === 4 ? -0.05 : 0.04;
-  const severeRisk = Math.max(0.03, Math.min(0.35, severeRatio + Math.max(0, -score) / 180 + structuralPenalty));
+  const tendency = Math.max(0.42, Math.min(0.76, basePass + score / 120));
+  const severeRatio = total ? (bucket.labels['靠3.3倍'] || 0) / total : 0.16;
+  const severeRisk = Math.max(0.03, Math.min(0.32, severeRatio + Number(analysis.twoHitRisk || 0) * 0.04 + Number(analysis.threeHitRisk || 0) * 0.08));
   const retryRate = Math.max(0.08, Math.min(0.5, 1 - tendency - severeRisk));
-  const reliability = Math.max(38, Math.min(88, 42 + Math.min(total, 50) * 0.45 + Math.min(Math.abs(score), 15)));
-  let riskLevel = '中';
-  const isStrictLowRisk = features.lowRiskGroupCount === 4
-    && features.rejectedGroupCount === 0
-    && features.maxGroupAdjacent <= 1
-    && features.maxGroupTailCount <= 1
-    && features.maxGroupTensCount <= 2;
+  const reliability = Math.max(45, Math.min(88, 48 + Math.min(total, 50) * 0.35 + Math.max(0, 12 - Number(analysis.twoHitRisk || 0) * 3 - Number(analysis.threeHitRisk || 0) * 5)));
 
-  if (isStrictLowRisk) {
-    riskLevel = '低';
-  } else if (features.rejectedGroupCount > 0 || features.lowRiskGroupCount <= 2 || severeRisk >= 0.24) {
-    riskLevel = '高';
-  }
+  let riskLevel = '中';
+  if (Number(analysis.threeHitRisk || 0) === 0 && Number(analysis.twoHitRisk || 0) <= 1) riskLevel = '低';
+  if (Number(analysis.threeHitRisk || 0) >= 1 || Number(analysis.twoHitRisk || 0) >= 3) riskLevel = '高';
+
+  const narrative = buildRiskNarrativeFromAnalysis(features, tracking);
 
   return {
     trackingId: tracking.id || '',
@@ -427,8 +396,8 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
     riskLevel,
     reliability: Number(reliability.toFixed(1)),
     score,
-    positives: dedupeLabels(positives).slice(0, 4),
-    negatives: dedupeLabels(negatives).slice(0, 4),
+    positives: narrative.positives.slice(0, 4),
+    negatives: narrative.negatives.slice(0, 4),
     features
   };
 }

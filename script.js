@@ -2062,7 +2062,8 @@ function cleanupNumbers(arr, maxNum){
         group3: order[2],
         group4: order[3],
         full: order[4]
-      }
+      },
+      analysis: s.generatedGroups.analysisMeta || null
     };
 
     const controller = new AbortController();
@@ -2362,7 +2363,37 @@ function buildSimpleGeneratedPlan(id, analysis){
   const twoHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,2).filter(pair => highRiskPairs.has(comboKey(pair))).length, 0);
   const threeHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,3).filter(triple => highRiskTriples.has(comboKey(triple))).length, 0);
   const hotCounts = mains.map(g => g.filter(n => hot.includes(n)).length);
-  return { groups, score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15), searchedCandidates: 1, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: 0, twoHitRisk, threeHitRisk, lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk), mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'simple', downgraded: false, whyQualified: `已依近50期避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。` };
+  const riskGroupDetails = mains.map((g, idx) => ({
+    groupIndex: idx + 1,
+    hotCount: g.filter(n => hot.includes(n)).length,
+    riskyNumbers: g.filter(n => riskyNumbers.has(n)),
+    riskyPairHits: getCombinations(g,2).filter(pair => highRiskPairs.has(comboKey(pair))).map(pair => pair.join('、')),
+    riskyTripleHits: getCombinations(g,3).filter(triple => highRiskTriples.has(comboKey(triple))).map(triple => triple.join('、'))
+  }));
+  return {
+    groups,
+    score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15),
+    searchedCandidates: 1,
+    analyzedDrawCount: analysis.drawCount || 0,
+    elapsedMs: 0,
+    twoHitRisk,
+    threeHitRisk,
+    lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk),
+    mediumRiskGroups: 0,
+    rejectedGroups: 0,
+    selectedPool: 'simple',
+    downgraded: false,
+    whyQualified: `已依近50期避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。`,
+    analysisMeta: {
+      evaluatedWindow: 50,
+      drawCount: analysis.drawCount || 0,
+      twoHitRisk,
+      threeHitRisk,
+      hotNumbers: hot,
+      coldNumbers: cold,
+      riskGroupDetails
+    }
+  };
 }
 
 function bindEvents(id){
