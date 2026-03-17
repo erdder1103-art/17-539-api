@@ -329,62 +329,111 @@ function formatRiskDetailGroup(detail) {
   const parts = [];
   if ((detail.riskyTripleHits || []).length) parts.push(`第${detail.groupIndex}組含高風險三連號 ${detail.riskyTripleHits[0]}`);
   if ((detail.riskyPairHits || []).length) parts.push(`第${detail.groupIndex}組含高風險雙號 ${detail.riskyPairHits[0]}`);
-  if ((detail.riskyNumbers || []).length >= 3) parts.push(`第${detail.groupIndex}組高風險號偏多（${detail.riskyNumbers.slice(0,3).join('、')}）`);
+  if ((detail.riskyNumbers || []).length >= 2) parts.push(`第${detail.groupIndex}組高風險號偏多（${detail.riskyNumbers.slice(0,3).join('、')}）`);
   if (Number(detail.hotCount || 0) >= 3) parts.push(`第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`);
   return parts;
 }
 
-function buildRiskNarrativeFromAnalysis(features, tracking) {
+function normalizeTrackingAnalysis(tracking) {
   const analysis = tracking.analysis || {};
+  const groups = tracking.groups || {};
+  const hotSet = new Set((analysis.hotNumbers || []).map(String));
+  const riskySet = new Set((analysis.riskyNumbers || []).map(String));
+  const pairSet = new Set((analysis.highRiskPairs || []).map(String));
+  const tripleSet = new Set((analysis.highRiskTriples || []).map(String));
+  const details = ['group1', 'group2', 'group3', 'group4'].map((key, idx) => {
+    const nums = Array.isArray(groups[key]) ? groups[key].map(String) : [];
+    const riskyPairHits = [];
+    const riskyTripleHits = [];
+    for (let i = 0; i < nums.length; i++) {
+      for (let j = i + 1; j < nums.length; j++) {
+        const pair = [nums[i], nums[j]].sort().join('・');
+        if (pairSet.has(pair)) riskyPairHits.push(pair.replace(/・/g, '、'));
+      }
+    }
+    for (let i = 0; i < nums.length; i++) {
+      for (let j = i + 1; j < nums.length; j++) {
+        for (let k = j + 1; k < nums.length; k++) {
+          const triple = [nums[i], nums[j], nums[k]].sort().join('・');
+          if (tripleSet.has(triple)) riskyTripleHits.push(triple.replace(/・/g, '、'));
+        }
+      }
+    }
+    return {
+      groupIndex: idx + 1,
+      hotCount: nums.filter((n) => hotSet.has(n)).length,
+      riskyNumbers: nums.filter((n) => riskySet.has(n)),
+      riskyPairHits,
+      riskyTripleHits
+    };
+  });
+  const twoHitRisk = details.reduce((acc, d) => acc + d.riskyPairHits.length, 0);
+  const threeHitRisk = details.reduce((acc, d) => acc + d.riskyTripleHits.length, 0);
+  return {
+    ...analysis,
+    riskGroupDetails: details,
+    twoHitRisk,
+    threeHitRisk,
+    drawCount: Number(analysis.drawCount || 0),
+    evaluatedWindow: Number(analysis.evaluatedWindow || 50)
+  };
+}
+
+function buildRiskNarrativeFromAnalysis(features, tracking) {
+  const analysis = normalizeTrackingAnalysis(tracking);
   const positives = [];
   const negatives = [];
   const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails : [];
-  if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || 50}期資料避開主要碰撞組合`);
-  if (Number(analysis.threeHitRisk || 0) === 0) positives.push('四組未落入高風險三連號同組');
-  if (Number(analysis.twoHitRisk || 0) <= 1) positives.push('主四組高風險雙號控制在低水位');
   const hotCounts = details.map(d => Number(d.hotCount || 0));
-  if (hotCounts.length && Math.max(...hotCounts) <= 2) positives.push('熱號已分散配置於不同分組');
+  const pairGroups = details.filter(d => (d.riskyPairHits || []).length).map(d => d.groupIndex);
+  const tripleGroups = details.filter(d => (d.riskyTripleHits || []).length).map(d => d.groupIndex);
+  const heavyRiskGroups = details.filter(d => (d.riskyNumbers || []).length >= 2).map(d => d.groupIndex);
+
+  if (analysis.drawCount > 0) positives.push(`依近${analysis.evaluatedWindow}期資料完成碰撞避讓`);
+  if (!tripleGroups.length) positives.push('四組均未落入高風險三連號同組');
+  else positives.push(`已將高風險三連號控制在第${tripleGroups.join('、')}組以外`);
+  if (pairGroups.length <= 1) positives.push('高風險雙號同組控制在低水位');
+  if (hotCounts.length && Math.max(...hotCounts) <= 2) positives.push('熱號已拆分配置於不同分組');
+  else if (hotCounts.length) positives.push(`熱號主集中於第${hotCounts.indexOf(Math.max(...hotCounts)) + 1}組`);
   if (features.fullCoverage === 19) positives.push('全車19顆完整承接補位號碼');
 
   for (const detail of details) negatives.push(...formatRiskDetailGroup(detail));
-
-  if (!negatives.length) {
-    if (Number(analysis.twoHitRisk || 0) === 0 && Number(analysis.threeHitRisk || 0) === 0) {
-      negatives.push('主四組未見明顯高風險雙號 / 三連號同組');
-    } else if (Number(analysis.twoHitRisk || 0) > 0) {
-      negatives.push(`主四組仍有 ${analysis.twoHitRisk} 組高風險雙號需留意`);
-    }
-  }
-  return { positives: dedupeLabels(positives), negatives: dedupeLabels(negatives) };
+  if (!negatives.length) negatives.push('主四組未見明顯高風險雙號或三連號同組');
+  if (heavyRiskGroups.length) negatives.push(`第${heavyRiskGroups.join('、')}組高風險號密度偏高`);
+  return { positives: dedupeLabels(positives).slice(0,4), negatives: dedupeLabels(negatives).slice(0,4), analysis };
 }
 
 function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   const bucket = (learningState && learningState.system) || DEFAULT_LEARNING_BUCKET;
   const total = Number(bucket.total || 0);
   const features = buildFeatureSnapshot(tracking);
-  const analysis = tracking.analysis || {};
+  const narrative = buildRiskNarrativeFromAnalysis(features, tracking);
+  const analysis = narrative.analysis || normalizeTrackingAnalysis(tracking);
+  const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails : [];
+  const maxHot = details.length ? Math.max(...details.map(d => Number(d.hotCount || 0))) : 0;
+  const riskyNumsTotal = details.reduce((acc, d) => acc + (d.riskyNumbers || []).length, 0);
+  const pairGroups = details.filter(d => (d.riskyPairHits || []).length).length;
+  const tripleGroups = details.filter(d => (d.riskyTripleHits || []).length).length;
 
-  let score = 0;
-  score += Math.max(0, 12 - Number(analysis.twoHitRisk || 0) * 8);
-  score += Math.max(0, 14 - Number(analysis.threeHitRisk || 0) * 12);
+  let score = 66;
+  score -= Number(analysis.twoHitRisk || 0) * 9;
+  score -= Number(analysis.threeHitRisk || 0) * 16;
+  score -= Math.max(0, maxHot - 2) * 6;
+  score -= riskyNumsTotal * 2.5;
+  score -= pairGroups * 3;
+  score -= tripleGroups * 6;
   if (features.fullCoverage === 19) score += 6;
-  if (Array.isArray(analysis.riskGroupDetails)) {
-    const hotCounts = analysis.riskGroupDetails.map(d => Number(d.hotCount || 0));
-    if (hotCounts.length) score += Math.max(0, 8 - Math.max(...hotCounts) * 2);
-  }
+  score = Math.max(18, Math.min(92, score));
 
   const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.55;
-  const tendency = Math.max(0.42, Math.min(0.76, basePass + score / 120));
-  const severeRatio = total ? (bucket.labels['靠3.3倍'] || 0) / total : 0.16;
-  const severeRisk = Math.max(0.03, Math.min(0.32, severeRatio + Number(analysis.twoHitRisk || 0) * 0.04 + Number(analysis.threeHitRisk || 0) * 0.08));
-  const retryRate = Math.max(0.08, Math.min(0.5, 1 - tendency - severeRisk));
-  const reliability = Math.max(45, Math.min(88, 48 + Math.min(total, 50) * 0.35 + Math.max(0, 12 - Number(analysis.twoHitRisk || 0) * 3 - Number(analysis.threeHitRisk || 0) * 5)));
+  const tendency = Math.max(0.28, Math.min(0.88, basePass * 0.35 + score / 100 * 0.65));
+  const severeRisk = Math.max(0.04, Math.min(0.55, 0.08 + Number(analysis.twoHitRisk || 0) * 0.05 + Number(analysis.threeHitRisk || 0) * 0.1 + Math.max(0, maxHot - 2) * 0.04));
+  const retryRate = Math.max(0.06, Math.min(0.62, 1 - tendency - severeRisk));
+  const reliability = Math.max(38, Math.min(86, 44 + Math.min(total, 40) * 0.25 + Math.max(0, 18 - Number(analysis.twoHitRisk || 0) * 3 - Number(analysis.threeHitRisk || 0) * 6) + Math.max(0, 8 - riskyNumsTotal)));
 
   let riskLevel = '中';
-  if (Number(analysis.threeHitRisk || 0) === 0 && Number(analysis.twoHitRisk || 0) <= 1) riskLevel = '低';
-  if (Number(analysis.threeHitRisk || 0) >= 1 || Number(analysis.twoHitRisk || 0) >= 3) riskLevel = '高';
-
-  const narrative = buildRiskNarrativeFromAnalysis(features, tracking);
+  if (Number(analysis.threeHitRisk || 0) === 0 && Number(analysis.twoHitRisk || 0) === 0 && maxHot <= 2 && riskyNumsTotal <= 4) riskLevel = '低';
+  else if (Number(analysis.threeHitRisk || 0) >= 1 || Number(analysis.twoHitRisk || 0) >= 2 || maxHot >= 3 || riskyNumsTotal >= 7) riskLevel = '高';
 
   return {
     trackingId: tracking.id || '',
@@ -396,8 +445,8 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
     riskLevel,
     reliability: Number(reliability.toFixed(1)),
     score,
-    positives: narrative.positives.slice(0, 4),
-    negatives: narrative.negatives.slice(0, 4),
+    positives: narrative.positives,
+    negatives: narrative.negatives,
     features
   };
 }
