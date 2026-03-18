@@ -1,4 +1,3 @@
-
 (() => {
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -8,13 +7,26 @@
 
   const CONFIG = {
     autoRefreshMs: 30 * 1000,
-    fetchLimit: 50,
+    analysisWindow: 100,
+    fetchLimit: 100,
     storageKey: "lottery_dual_machine_v31_dual_tracking",
     urls: {
       ttl: [`${API_BASE}/api/ttl`, `${API_FALLBACK_BASE}/api/ttl`],
       l539: [`${API_BASE}/api/539`, `${API_FALLBACK_BASE}/api/539`]
     }
   };
+
+  function getAnalysisWindow(){
+    return Math.max(1, parseInt(CONFIG.analysisWindow || CONFIG.fetchLimit || 100, 10) || 100);
+  }
+
+  function getHistoryWindowText(){
+    return `${getAnalysisWindow()}期`;
+  }
+
+  function getRecentHistoryWindowText(){
+    return `近${getAnalysisWindow()}期`;
+  }
 
   const state = {
     lotteries: {},
@@ -332,7 +344,7 @@ function openSearchOverlay(id){
   els.grid.innerHTML = '';
   names.forEach((name, idx)=> els.grid.appendChild(makeSearchCard(name, idx)));
   els.title.textContent = `${state.lotteries[id].cfg.title}｜自動生成中`;
-  els.sub.textContent = '系統會依近50期高風險雙號 / 三連號與熱中冷分布，快速生成一組可用方案。';
+  els.sub.textContent = `系統會依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布，快速生成一組可用方案。`;
   els.pill.textContent = '生成中';
   els.fill.style.width = '0%';
   els.searched.textContent = '0';
@@ -545,14 +557,14 @@ function cleanupNumbers(arr, maxNum){
 
         <div class="card">
           <div class="hd">
-            <div class="title"><span class="dot"></span>${cfg.title}｜歷史開獎分析（50期）</div>
-            <div class="small">最新紀錄由上往下50期</div>
+            <div class="title"><span class="dot"></span>${cfg.title}｜歷史開獎分析（${getHistoryWindowText()}）</div>
+            <div class="small">最新紀錄由上往下${getHistoryWindowText()}</div>
           </div>
           <div class="bd">
             <textarea id="${id}_historyInput" placeholder="同步後會顯示：&#10;2026/3/11(星期三) 開獎號碼 05 15 26 37 38"></textarea>
 
             <div class="btns">
-              <button id="${id}_btnSync">同步最新 50 期</button>
+              <button id="${id}_btnSync">同步最新 ${getHistoryWindowText()}</button>
               <button id="${id}_btnAnalyzeHistory">分析資料</button>
               <button id="${id}_btnGenerateSmart">防 2/3 碰撞自動生成</button>
               <button class="secondary" id="${id}_btnApply01to39">塞入 01-39 到搖獎號碼</button>
@@ -601,7 +613,7 @@ function cleanupNumbers(arr, maxNum){
                 <div class="row">
                   <div>
                     <label class="small">通報名稱</label>
-                    <input id="${id}_manualSource" placeholder="例如：阿明通報 / VIP牌組">
+                    <input id="${id}_manualSource" placeholder="點我開彈窗選擇內定名稱或自行輸入">
                   </div>
                   <div>
                     <label class="small">全車號碼</label>
@@ -938,7 +950,7 @@ function cleanupNumbers(arr, maxNum){
       persistAll();
 
       if(changed && !silent){
-        showMiniNotice(`${s.cfg.title} 已抓到新結果並更新 50 期資料`, "ok");
+        showMiniNotice(`${s.cfg.title} 已抓到新結果並更新 ${getHistoryWindowText()}資料`, "ok");
       }else if(!silent){
         showMiniNotice(`${s.cfg.title} 同步完成`, "info");
       }
@@ -997,28 +1009,62 @@ function cleanupNumbers(arr, maxNum){
       return parseInt(a.num,10) - parseInt(b.num,10);
     });
 
-    const hot = hotRank.slice(0, 10).map(x=>x.num);
-    const cold = coldRank.slice(0, 10).map(x=>x.num);
+    const analysisWindow = getAnalysisWindow();
+    const evaluatedWindow = Math.min(drawCount, analysisWindow);
+    const recentDraws = draws.slice(0, analysisWindow);
+    const countsWindow = {};
+    const pairCountsWindow = {};
+    const tripleCountsWindow = {};
+    const maxNum = state.lotteries[id].cfg.maxNum;
 
-    const pairCounts = {};
-    const tripleCounts = {};
+    for(let i=1;i<=maxNum;i++){
+      countsWindow[String(i).padStart(2,'0')] = 0;
+    }
 
-    draws.forEach(draw=>{
+    recentDraws.forEach(draw=>{
+      draw.forEach(n=> countsWindow[n] = (countsWindow[n] || 0) + 1);
       getCombinations(draw, 2).forEach(pair=>{
         const key = comboKey(pair);
-        pairCounts[key] = (pairCounts[key] || 0) + 1;
+        pairCountsWindow[key] = (pairCountsWindow[key] || 0) + 1;
       });
       getCombinations(draw, 3).forEach(triple=>{
         const key = comboKey(triple);
-        tripleCounts[key] = (tripleCounts[key] || 0) + 1;
+        tripleCountsWindow[key] = (tripleCountsWindow[key] || 0) + 1;
       });
     });
 
-    const topPairs = Object.entries(pairCounts)
+    const hot = hotRank.slice(0, 10).map(x=>x.num);
+    const cold = coldRank.slice(0, 10).map(x=>x.num);
+    const mid = arr.map(x=>x.num).filter(n=>!hot.includes(n) && !cold.includes(n));
+
+    const pairHitThreshold = analysisWindow >= 100 ? 3 : 2;
+    const tripleHitThreshold = analysisWindow >= 100 ? 2 : 1;
+
+    const highRiskPairs = new Set(
+      Object.entries(pairCountsWindow)
+        .filter(([,count]) => count >= pairHitThreshold)
+        .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 24)
+        .map(([key])=>key)
+    );
+
+    const highRiskTriples = new Set(
+      Object.entries(tripleCountsWindow)
+        .filter(([,count]) => count >= tripleHitThreshold)
+        .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 12)
+        .map(([key])=>key)
+    );
+
+    const riskyNumberSet = new Set();
+    [...highRiskPairs].forEach(key=> key.split('-').forEach(n=> riskyNumberSet.add(n)));
+    [...highRiskTriples].forEach(key=> key.split('-').forEach(n=> riskyNumberSet.add(n)));
+
+    const topPairs = Object.entries(pairCountsWindow)
       .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8);
 
-    const topTriples = Object.entries(tripleCounts)
+    const topTriples = Object.entries(tripleCountsWindow)
       .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8);
 
@@ -1026,12 +1072,23 @@ function cleanupNumbers(arr, maxNum){
       counts,
       drawCount,
       draws,
+      analysisWindow,
+      evaluatedWindow,
       hot,
       cold,
+      mid,
       hotRank,
       coldRank,
-      pairCounts,
-      tripleCounts,
+      countsWindow,
+      pairCounts: pairCountsWindow,
+      tripleCounts: tripleCountsWindow,
+      pairCountsWindow,
+      tripleCountsWindow,
+      highRiskPairMinHits: pairHitThreshold,
+      highRiskTripleMinHits: tripleHitThreshold,
+      highRiskPairs,
+      highRiskTriples,
+      riskyNumberSet,
       topPairs,
       topTriples
     };
@@ -1147,7 +1204,7 @@ function cleanupNumbers(arr, maxNum){
   async function buildSmartGroups(id, analysis, onProgress){
     const startedAt = Date.now();
     const target = 1;
-    if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: '分析近50期', statusText: '生成中', footerText: '系統正在依近50期高風險雙號 / 三連號與熱中冷分布直接生成方案。' });
+    if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布直接生成方案。` });
     await sleep(30);
     const best = buildSimpleGeneratedPlan(id, analysis);
     const elapsedMs = Date.now() - startedAt;
@@ -1690,6 +1747,14 @@ function formatEta(ms){
         cleanupMode: els.cleanupMode.value,
         drawMode: els.drawMode.value,
         autoDownloadXlsx: els.autoDownloadXlsx.checked,
+        manualInputs: {
+          source: $(`${id}_manualSource`)?.value || '',
+          full: $(`${id}_manualFull`)?.value || '',
+          group1: $(`${id}_manualGroup1`)?.value || '',
+          group2: $(`${id}_manualGroup2`)?.value || '',
+          group3: $(`${id}_manualGroup3`)?.value || '',
+          group4: $(`${id}_manualGroup4`)?.value || ''
+        },
         prizes: [1,2,3,4,5].map(i => ({
           label: $(`${id}_prize${i}Label`).value,
           desc: $(`${id}_prize${i}Desc`).value,
@@ -1739,6 +1804,12 @@ function formatEta(ms){
         els.cleanupMode.value = saved.cleanupMode || "trim";
         els.drawMode.value = saved.drawMode || "remove";
         els.autoDownloadXlsx.checked = !!saved.autoDownloadXlsx;
+        if($(`${id}_manualSource`)) $(`${id}_manualSource`).value = saved?.manualInputs?.source || '';
+        if($(`${id}_manualFull`)) $(`${id}_manualFull`).value = saved?.manualInputs?.full || '';
+        if($(`${id}_manualGroup1`)) $(`${id}_manualGroup1`).value = saved?.manualInputs?.group1 || '';
+        if($(`${id}_manualGroup2`)) $(`${id}_manualGroup2`).value = saved?.manualInputs?.group2 || '';
+        if($(`${id}_manualGroup3`)) $(`${id}_manualGroup3`).value = saved?.manualInputs?.group3 || '';
+        if($(`${id}_manualGroup4`)) $(`${id}_manualGroup4`).value = saved?.manualInputs?.group4 || '';
 
         if(Array.isArray(saved.prizes)){
           saved.prizes.forEach((p, idx)=>{
@@ -2031,7 +2102,7 @@ function formatEta(ms){
     const stableGroupCount = metrics.filter((item)=>item.pairHits.length === 0 && item.tripleHits.length === 0 && item.riskScore < 7).length;
     const riskyNumberCoverage = metrics.reduce((sum, item)=>sum + item.riskyNums.length, 0);
     const heatAverage = metrics.length ? metrics.reduce((sum, item)=>sum + item.heatScore, 0) / metrics.length : 0;
-    const drawCount = Number(analysis.drawCount || analysis.evaluatedWindow || 0);
+    const drawCount = Number(analysis.evaluatedWindow || analysis.drawCount || 0);
     const windowFactor = Math.min(drawCount, 100) / 100;
     const fullSize = Number(row?.groups?.full?.length || 0);
     const safest = metrics.slice().sort((a,b)=>a.riskScore - b.riskScore || a.heatScore - b.heatScore || a.idx - b.idx)[0];
@@ -2091,7 +2162,7 @@ function formatEta(ms){
     const negatives = [];
     if(safest) positives.push(`最佳組是第${safest.detail.groupIndex}組：${bestReasons.slice(0,3).join('、')}`);
     positives.push(structureSummary);
-    positives.push(`穩定組數 ${stableGroupCount}/4，分析窗 ${drawCount || '-'} 期`);
+    positives.push(`穩定組數 ${stableGroupCount}/4，分析窗 ${drawCount || getAnalysisWindow()} 期`);
     if(fullSize === 19) positives.push('全車19顆完整，可直接匯出 logs');
 
     if(riskiest) negatives.push(`風險組是第${riskiest.detail.groupIndex}組：${worstReasons.slice(0,3).join('、')}`);
@@ -2336,6 +2407,115 @@ function autoGenerateToLog(id){
   showMiniNotice(`${s.cfg.title}：已一鍵抽出第一組到第四組與全車號碼，logs 可直接匯出`, 'ok');
 }
 
+
+const MANUAL_SOURCE_PRESETS = ['無敵/馬上發財', '隨機生成/講難聽點39顆隨機選'];
+const manualSourceState = { lotteryId: '', presets: MANUAL_SOURCE_PRESETS.slice() };
+
+function ensureManualSourceModal(){
+  if($('manualSourceModal')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'manualSourceModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.68);display:none;align-items:center;justify-content:center;padding:18px;z-index:10000;backdrop-filter:blur(2px)';
+  wrap.innerHTML = `
+    <div style="width:min(640px,96vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(36,6,6,.97));border:1px solid rgba(247,215,123,.24);border-radius:20px;padding:18px;color:#ffe7a8;box-shadow:0 20px 50px rgba(0,0,0,.45);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:#ffe7a8;">選擇通報名稱</div>
+          <div class="small" style="margin-top:4px;">可直接點選內定名稱，也可在下方自行輸入。</div>
+        </div>
+        <button type="button" class="secondary" id="manualSourceClose">關閉</button>
+      </div>
+      <div id="manualSourcePresetWrap" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;"></div>
+      <div style="margin-top:16px;">
+        <label class="small" for="manualSourceCustomInput">自行輸入名稱</label>
+        <input id="manualSourceCustomInput" placeholder="例如：阿明通報 / VIP牌組 / 其他自訂名稱" style="margin-top:8px;">
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap;">
+        <div id="manualSourcePreview" class="small" style="line-height:1.8;">目前尚未設定通報名稱</div>
+        <div class="btns">
+          <button type="button" class="secondary" id="manualSourceClear">清空本欄</button>
+          <button type="button" class="green" id="manualSourceApply">帶入名稱</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  $('manualSourceClose').addEventListener('click', closeManualSourcePicker);
+  $('manualSourceApply').addEventListener('click', applyManualSourcePicker);
+  $('manualSourceClear').addEventListener('click', ()=>{
+    const input = manualSourceState.lotteryId ? $(`${manualSourceState.lotteryId}_manualSource`) : null;
+    if(input) input.value = '';
+    if($('manualSourceCustomInput')) $('manualSourceCustomInput').value = '';
+    refreshManualSourcePresets();
+  });
+  $('manualSourceCustomInput').addEventListener('input', refreshManualSourcePresets);
+  $('manualSourceCustomInput').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      applyManualSourcePicker();
+    }
+  });
+  wrap.addEventListener('click', (e)=>{ if(e.target === wrap) closeManualSourcePicker(); });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && manualSourceState.lotteryId) closeManualSourcePicker();
+  });
+}
+
+function refreshManualSourcePresets(){
+  const wrap = $('manualSourcePresetWrap');
+  if(!wrap) return;
+  const currentValue = ($('manualSourceCustomInput')?.value || '').trim();
+  wrap.innerHTML = '';
+  manualSourceState.presets.forEach((name)=>{
+    const active = currentValue === name;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = name;
+    btn.className = active ? 'green' : 'secondary';
+    btn.style.whiteSpace = 'normal';
+    btn.addEventListener('click', ()=>{
+      if($('manualSourceCustomInput')) $('manualSourceCustomInput').value = name;
+      refreshManualSourcePresets();
+    });
+    wrap.appendChild(btn);
+  });
+  if($('manualSourcePreview')) $('manualSourcePreview').textContent = currentValue ? `即將帶入：${currentValue}` : '目前尚未設定通報名稱';
+}
+
+function openManualSourcePicker(id){
+  ensureManualSourceModal();
+  manualSourceState.lotteryId = id;
+  const input = $(`${id}_manualSource`);
+  if($('manualSourceCustomInput')) $('manualSourceCustomInput').value = (input?.value || '').trim();
+  refreshManualSourcePresets();
+  $('manualSourceModal').style.display = 'flex';
+  setTimeout(()=> $('manualSourceCustomInput')?.focus(), 0);
+}
+
+function closeManualSourcePicker(){
+  if($('manualSourceModal')) $('manualSourceModal').style.display = 'none';
+  manualSourceState.lotteryId = '';
+}
+
+function applyManualSourcePicker(){
+  const id = manualSourceState.lotteryId;
+  if(!id) return;
+  const input = $(`${id}_manualSource`);
+  if(input) input.value = ($('manualSourceCustomInput')?.value || '').trim();
+  persistAll();
+  closeManualSourcePicker();
+}
+
+function bindManualSourcePicker(id){
+  ensureManualSourceModal();
+  const input = $(`${id}_manualSource`);
+  if(!input || input.dataset.sourcePickerBound === '1') return;
+  input.dataset.sourcePickerBound = '1';
+  input.readOnly = true;
+  input.style.cursor = 'pointer';
+  input.addEventListener('focus', ()=>openManualSourcePicker(id));
+  input.addEventListener('click', ()=>openManualSourcePicker(id));
+}
+
 const manualPickerState = { lotteryId: '', fieldKey: '' };
 
 function collectManualSelections(id){
@@ -2446,10 +2626,8 @@ function buildTrackingAnalysisMetaFromGroups(groups, analysis){
   const mid = allNums.filter(n => !hot.includes(n) && !cold.includes(n));
   const pairCounts = analysis?.pairCounts || {};
   const tripleCounts = analysis?.tripleCounts || {};
-  const topPairs = Array.isArray(analysis?.topPairs) ? analysis.topPairs : [];
-  const topTriples = Array.isArray(analysis?.topTriples) ? analysis.topTriples : [];
-  const highRiskPairs = topPairs.filter(([key,count]) => Number(count||0) >= 2).map(([key]) => key);
-  const highRiskTriples = topTriples.filter(([key,count]) => Number(count||0) >= 2).map(([key]) => key);
+  const highRiskPairs = Array.isArray(analysis?.highRiskPairs) ? analysis.highRiskPairs : Array.from(analysis?.highRiskPairs || []);
+  const highRiskTriples = Array.isArray(analysis?.highRiskTriples) ? analysis.highRiskTriples : Array.from(analysis?.highRiskTriples || []);
   const riskyNumberSet = new Set();
   highRiskPairs.forEach(key => key.split('-').forEach(n => riskyNumberSet.add(n)));
   highRiskTriples.forEach(key => key.split('-').forEach(n => riskyNumberSet.add(n)));
@@ -2475,7 +2653,7 @@ function buildTrackingAnalysisMetaFromGroups(groups, analysis){
   });
   return {
     drawCount: Number(analysis?.drawCount || 0),
-    evaluatedWindow: Number(analysis?.drawCount || 0),
+    evaluatedWindow: Number(analysis?.evaluatedWindow || analysis?.analysisWindow || analysis?.drawCount || 0),
     counts: analysis?.counts || {},
     hotNumbers: hot,
     midNumbers: mid,
@@ -2523,7 +2701,7 @@ function buildSimpleGeneratedPlan(id, analysis){
   const twoHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,2).filter(pair => highRiskPairs.has(comboKey(pair))).length, 0);
   const threeHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,3).filter(triple => highRiskTriples.has(comboKey(triple))).length, 0);
   const hotCounts = mains.map(g => g.filter(n => hot.includes(n)).length);
-  return { groups, score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15), searchedCandidates: 1, analyzedDrawCount: analysis.drawCount || 0, elapsedMs: 0, twoHitRisk, threeHitRisk, lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk), mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'simple', downgraded: false, whyQualified: `已依近50期避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。` };
+  return { groups, score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15), searchedCandidates: 1, analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0, elapsedMs: 0, twoHitRisk, threeHitRisk, lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk), mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'simple', downgraded: false, whyQualified: `已依${getRecentHistoryWindowText()}避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。` };
 }
 
 function bindEvents(id){
@@ -2577,7 +2755,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   setConfirmAvailability(id, false, "系統正在生成可用方案");
   openSearchOverlay(id);
   const startedAt = Date.now();
-  updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: '分析近50期', statusText: '生成中', footerText: '系統正在分析高風險雙號 / 三連號與熱中冷分布。' });
+  updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在分析${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布。` });
   await sleep(120);
   try {
     const bestResult = buildSimpleGeneratedPlan(id, analysis);
@@ -2654,6 +2832,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
 
   async function initLottery(id, restored){
     bindEvents(id);
+    bindManualSourcePicker(id);
 
     if(restored){
       renderRestoredState(id);

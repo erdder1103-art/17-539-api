@@ -47,6 +47,7 @@ let lastUpdate = null;
 let isUpdating = false;
 let updateTimer = null;
 const UPDATE_INTERVAL_MS = 30 * 1000;
+const DRAW_HISTORY_LIMIT = 100;
 const syncState = {
   intervalMs: UPDATE_INTERVAL_MS,
   startedAt: formatTaipeiDateTime(),
@@ -106,7 +107,7 @@ function parse539(html) {
     if (!isValidFive(nums)) continue;
     results.push({ issue, date, numbers: nums.map(pad2) });
   }
-  return dedupe(results).slice(0, 50);
+  return dedupe(results).slice(0, DRAW_HISTORY_LIMIT);
 }
 function parseTTL(html) {
   const text = htmlToText(html);
@@ -121,7 +122,7 @@ function parseTTL(html) {
     if (!isValidFive(nums)) continue;
     results.push({ issue, date, numbers: nums.map(pad2) });
   }
-  return dedupe(results).slice(0, 50);
+  return dedupe(results).slice(0, DRAW_HISTORY_LIMIT);
 }
 async function handleAutoCheck(type, title, list) {
   if (!Array.isArray(list) || !list.length) return;

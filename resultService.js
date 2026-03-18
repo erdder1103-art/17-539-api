@@ -8,6 +8,8 @@ const RESULT_STATE_FILE = getDataFile('result_state.json');
 const RESULT_HISTORY_FILE = getDataFile('result_history.json');
 const LEARNING_FILE = getDataFile('learning_state.json');
 
+const ANALYSIS_WINDOW = 100;
+
 const DEFAULT_LEARNING_BUCKET = {
   total: 0,
   labels: {},
@@ -576,7 +578,7 @@ function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
   const { analysis, details, totalPairHits, totalTripleHits, hotCounts, pairExposure, tripleExposure, identityHeatScores, identityFingerprints } = useProfile;
   const positives = [];
   const negatives = [];
-  if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || 50}期資料檢查主四組碰撞風險`);
+  if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || ANALYSIS_WINDOW}期資料檢查主四組碰撞風險`);
 
   const safest = details.slice().sort((a, b) => {
     const aRisk = Number(a.groupPairExposure || 0) + Number(a.groupTripleExposure || 0) * 2 + (Array.isArray(a.riskyNumbers) ? a.riskyNumbers.length : 0);
@@ -698,7 +700,7 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   let retryRate = 100 - tendency - severeRisk;
   retryRate = Math.max(4, Math.min(58, retryRate));
 
-  let reliability = 42 + Math.min(total, 50) * 0.12 + Math.min(Number(analysis.drawCount || 0), 50) * 0.18;
+  let reliability = 42 + Math.min(total, ANALYSIS_WINDOW) * 0.12 + Math.min(Number(analysis.evaluatedWindow || analysis.drawCount || 0), ANALYSIS_WINDOW) * 0.18;
   reliability -= severeRisk * 0.09;
   reliability += Math.max(0, 4 - denseRiskGroups) * 1.0;
   reliability += Math.max(0, 10 - hotSpreadPenalty) * 0.25;

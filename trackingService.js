@@ -11,6 +11,7 @@ const { buildNextIssue } = require('./resultService');
 
 const inflightByKey = new Map();
 const FULL_GROUP_SIZE = 19;
+const TRACKING_HISTORY_LIMIT = 100;
 
 function pad2(n) {
   return String(parseInt(n, 10)).padStart(2, '0');
@@ -342,7 +343,7 @@ function getTrackingOverview(lotteryType) {
   return {
     ok: true,
     active,
-    history: getTrackingHistory(lotteryType, 50),
+    history: getTrackingHistory(lotteryType, TRACKING_HISTORY_LIMIT),
     message: active.length ? `目前共有 ${active.length} 筆待開獎追蹤` : '目前沒有待開獎追蹤'
   };
 }

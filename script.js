@@ -1,4 +1,3 @@
-
 (() => {
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -8,13 +7,26 @@
 
   const CONFIG = {
     autoRefreshMs: 30 * 1000,
-    fetchLimit: 50,
+    analysisWindow: 100,
+    fetchLimit: 100,
     storageKey: "lottery_dual_machine_v31_dual_tracking",
     urls: {
       ttl: [`${API_BASE}/api/ttl`, `${API_FALLBACK_BASE}/api/ttl`],
       l539: [`${API_BASE}/api/539`, `${API_FALLBACK_BASE}/api/539`]
     }
   };
+
+  function getAnalysisWindow(){
+    return Math.max(1, parseInt(CONFIG.analysisWindow || CONFIG.fetchLimit || 100, 10) || 100);
+  }
+
+  function getHistoryWindowText(){
+    return `${getAnalysisWindow()}期`;
+  }
+
+  function getRecentHistoryWindowText(){
+    return `近${getAnalysisWindow()}期`;
+  }
 
   const state = {
     lotteries: {},
@@ -332,7 +344,7 @@ function openSearchOverlay(id){
   els.grid.innerHTML = '';
   names.forEach((name, idx)=> els.grid.appendChild(makeSearchCard(name, idx)));
   els.title.textContent = `${state.lotteries[id].cfg.title}｜自動生成中`;
-  els.sub.textContent = '系統會依近50期高風險雙號 / 三連號與熱中冷分布，快速生成一組可用方案。';
+  els.sub.textContent = `系統會依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布，快速生成一組可用方案。`;
   els.pill.textContent = '生成中';
   els.fill.style.width = '0%';
   els.searched.textContent = '0';
@@ -545,14 +557,14 @@ function cleanupNumbers(arr, maxNum){
 
         <div class="card">
           <div class="hd">
-            <div class="title"><span class="dot"></span>${cfg.title}｜歷史開獎分析（50期）</div>
-            <div class="small">最新紀錄由上往下50期</div>
+            <div class="title"><span class="dot"></span>${cfg.title}｜歷史開獎分析（${getHistoryWindowText()}）</div>
+            <div class="small">最新紀錄由上往下${getHistoryWindowText()}</div>
           </div>
           <div class="bd">
             <textarea id="${id}_historyInput" placeholder="同步後會顯示：&#10;2026/3/11(星期三) 開獎號碼 05 15 26 37 38"></textarea>
 
             <div class="btns">
-              <button id="${id}_btnSync">同步最新 50 期</button>
+              <button id="${id}_btnSync">同步最新 ${getHistoryWindowText()}</button>
               <button id="${id}_btnAnalyzeHistory">分析資料</button>
               <button id="${id}_btnGenerateSmart">防 2/3 碰撞自動生成</button>
               <button class="secondary" id="${id}_btnApply01to39">塞入 01-39 到搖獎號碼</button>
@@ -601,7 +613,7 @@ function cleanupNumbers(arr, maxNum){
                 <div class="row">
                   <div>
                     <label class="small">通報名稱</label>
-                    <input id="${id}_manualSource" placeholder="例如：阿明通報 / VIP牌組">
+                    <input id="${id}_manualSource" placeholder="點我開彈窗選擇內定名稱或自行輸入">
                   </div>
                   <div>
                     <label class="small">全車號碼</label>
@@ -629,6 +641,7 @@ function cleanupNumbers(arr, maxNum){
                   </div>
                 </div>
                 <div class="btns" style="margin-top:10px;">
+                  <button class="secondary" id="${id}_btnManualClear">清空手動號碼</button>
                   <button class="secondary" id="${id}_btnManualTracking">新增手動追蹤</button>
                   <button class="secondary" id="${id}_btnRefreshTracking">刷新追蹤清單</button>
                   <button class="secondary" id="${id}_btnTelegramTest">測試 TG</button>
@@ -680,6 +693,7 @@ function cleanupNumbers(arr, maxNum){
             </div>
 
             <div class="btns" style="margin-top:10px;">
+              <button class="green" id="${id}_btnManualRandomFill">一鍵抽第一組-第四組與全車</button>
               <button id="${id}_btnUndo">↩ 撤銷上一筆中獎者</button>
               <button class="danger" id="${id}_btnClearLog">🧹 清空中獎紀錄</button>
             </div>
@@ -697,6 +711,7 @@ function cleanupNumbers(arr, maxNum){
             </div>
 
             <div class="btns" style="margin-top:10px;">
+              <button class="green" id="${id}_btnQuickGenerateResult">一鍵抽第一組-第四組＋全車</button>
               <button class="secondary" id="${id}_btnCopyWinner">複製目前中獎者</button>
               <button class="secondary" id="${id}_btnExport">匯出 CSV</button>
               <button class="green" id="${id}_btnExportXlsx">匯出 logs.xlsx</button>
@@ -935,7 +950,7 @@ function cleanupNumbers(arr, maxNum){
       persistAll();
 
       if(changed && !silent){
-        showMiniNotice(`${s.cfg.title} 已抓到新結果並更新 50 期資料`, "ok");
+        showMiniNotice(`${s.cfg.title} 已抓到新結果並更新 ${getHistoryWindowText()}資料`, "ok");
       }else if(!silent){
         showMiniNotice(`${s.cfg.title} 同步完成`, "info");
       }
@@ -994,38 +1009,27 @@ function cleanupNumbers(arr, maxNum){
       return parseInt(a.num,10) - parseInt(b.num,10);
     });
 
-    const recent50 = draws.slice(0, 50);
-    const recent100 = draws.slice(0, 100);
-    const counts50 = {};
-    const counts100 = {};
-    const pairCounts50 = {};
-    const tripleCounts50 = {};
-    const pairCounts100 = {};
-
+    const analysisWindow = getAnalysisWindow();
+    const evaluatedWindow = Math.min(drawCount, analysisWindow);
+    const recentDraws = draws.slice(0, analysisWindow);
+    const countsWindow = {};
+    const pairCountsWindow = {};
+    const tripleCountsWindow = {};
     const maxNum = state.lotteries[id].cfg.maxNum;
+
     for(let i=1;i<=maxNum;i++){
-      const n = String(i).padStart(2, '0');
-      counts50[n] = 0;
-      counts100[n] = 0;
+      countsWindow[String(i).padStart(2,'0')] = 0;
     }
 
-    recent50.forEach(draw=>{
-      draw.forEach(n=> counts50[n] = (counts50[n] || 0) + 1);
+    recentDraws.forEach(draw=>{
+      draw.forEach(n=> countsWindow[n] = (countsWindow[n] || 0) + 1);
       getCombinations(draw, 2).forEach(pair=>{
         const key = comboKey(pair);
-        pairCounts50[key] = (pairCounts50[key] || 0) + 1;
+        pairCountsWindow[key] = (pairCountsWindow[key] || 0) + 1;
       });
       getCombinations(draw, 3).forEach(triple=>{
         const key = comboKey(triple);
-        tripleCounts50[key] = (tripleCounts50[key] || 0) + 1;
-      });
-    });
-
-    recent100.forEach(draw=>{
-      draw.forEach(n=> counts100[n] = (counts100[n] || 0) + 1);
-      getCombinations(draw, 2).forEach(pair=>{
-        const key = comboKey(pair);
-        pairCounts100[key] = (pairCounts100[key] || 0) + 1;
+        tripleCountsWindow[key] = (tripleCountsWindow[key] || 0) + 1;
       });
     });
 
@@ -1033,17 +1037,20 @@ function cleanupNumbers(arr, maxNum){
     const cold = coldRank.slice(0, 10).map(x=>x.num);
     const mid = arr.map(x=>x.num).filter(n=>!hot.includes(n) && !cold.includes(n));
 
+    const pairHitThreshold = analysisWindow >= 100 ? 3 : 2;
+    const tripleHitThreshold = analysisWindow >= 100 ? 2 : 1;
+
     const highRiskPairs = new Set(
-      Object.entries(pairCounts50)
-        .filter(([,count]) => count >= 2)
+      Object.entries(pairCountsWindow)
+        .filter(([,count]) => count >= pairHitThreshold)
         .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
         .slice(0, 24)
         .map(([key])=>key)
     );
 
     const highRiskTriples = new Set(
-      Object.entries(tripleCounts50)
-        .filter(([,count]) => count >= 1)
+      Object.entries(tripleCountsWindow)
+        .filter(([,count]) => count >= tripleHitThreshold)
         .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
         .slice(0, 12)
         .map(([key])=>key)
@@ -1053,11 +1060,11 @@ function cleanupNumbers(arr, maxNum){
     [...highRiskPairs].forEach(key=> key.split('-').forEach(n=> riskyNumberSet.add(n)));
     [...highRiskTriples].forEach(key=> key.split('-').forEach(n=> riskyNumberSet.add(n)));
 
-    const topPairs = Object.entries(pairCounts50)
+    const topPairs = Object.entries(pairCountsWindow)
       .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8);
 
-    const topTriples = Object.entries(tripleCounts50)
+    const topTriples = Object.entries(tripleCountsWindow)
       .sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]))
       .slice(0, 8);
 
@@ -1065,18 +1072,20 @@ function cleanupNumbers(arr, maxNum){
       counts,
       drawCount,
       draws,
+      analysisWindow,
+      evaluatedWindow,
       hot,
       cold,
       mid,
       hotRank,
       coldRank,
-      counts50,
-      counts100,
-      pairCounts: pairCounts50,
-      tripleCounts: tripleCounts50,
-      pairCounts50,
-      tripleCounts50,
-      pairCounts100,
+      countsWindow,
+      pairCounts: pairCountsWindow,
+      tripleCounts: tripleCountsWindow,
+      pairCountsWindow,
+      tripleCountsWindow,
+      highRiskPairMinHits: pairHitThreshold,
+      highRiskTripleMinHits: tripleHitThreshold,
       highRiskPairs,
       highRiskTriples,
       riskyNumberSet,
@@ -1172,205 +1181,38 @@ function cleanupNumbers(arr, maxNum){
     return score;
   }
 
-  function buildGroupStructure(group){
-    const nums = [...group].map(n => parseInt(n, 10)).sort((a,b)=>a-b);
-    const odd = nums.filter(n => n % 2 === 1).length;
-    const even = nums.length - odd;
-    const adjacent = nums.slice(1).reduce((acc, n, idx)=> acc + (n - nums[idx] === 1 ? 1 : 0), 0);
-    const tens = {};
-    nums.forEach(n=>{
-      const bucket = Math.floor(n / 10);
-      tens[bucket] = (tens[bucket] || 0) + 1;
-    });
-    const maxTens = Math.max(...Object.values(tens), 0);
-    const span = nums[nums.length - 1] - nums[0];
-    const oddEvenGap = Math.abs(odd - even);
-    return { odd, even, adjacent, oddEvenGap, maxTens, span };
-  }
-
-  function classifyHeat(num, analysis){
-    if((analysis.hot || []).includes(num)) return 'hot';
-    if((analysis.cold || []).includes(num)) return 'cold';
-    return 'mid';
-  }
-
-  function countHeat(group, analysis, kind){
-    return group.filter(n => classifyHeat(n, analysis) === kind).length;
-  }
-
-  function getGroupRiskSummary(group, analysis){
-    const structure = buildGroupStructure(group);
-    let riskyPairs = 0;
-    let riskyTriples = 0;
-    getCombinations(group, 2).forEach(pair=>{ if((analysis.highRiskPairs || new Set()).has(comboKey(pair))) riskyPairs += 1; });
-    getCombinations(group, 3).forEach(triple=>{ if((analysis.highRiskTriples || new Set()).has(comboKey(triple))) riskyTriples += 1; });
-    const hotCount = countHeat(group, analysis, 'hot');
-    const riskyNums = group.filter(n => (analysis.riskyNumberSet || new Set()).has(n)).length;
-    let score = riskyPairs * 120 + riskyTriples * 220 + Math.max(0, hotCount - 2) * 25 + Math.max(0, riskyNums - 2) * 18;
-    score += Math.max(0, structure.adjacent - 2) * 12;
-    score += Math.max(0, structure.maxTens - 3) * 10;
-    score += Math.max(0, structure.oddEvenGap - 3) * 8;
-    return { structure, riskyPairs, riskyTriples, hotCount, riskyNums, score };
-  }
-
-  function chooseAdaptiveTries(){
-    return 100;
-  }
-
-  function getStageLabel(n){
-    if(n < 30) return '建立第一階段候選';
-    if(n < 60) return '建立第二階段候選';
-    return '建立第三階段候選';
-  }
-
-  function pickBestNumberForGroup(candidates, group, analysis){
-    let best = null;
-    for(const num of shuffle(candidates).slice(0, Math.min(candidates.length, 12))){
-      const test = [...group, num].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-      const r = getGroupRiskSummary(test, analysis);
-      let cost = r.score;
-      const heat = classifyHeat(num, analysis);
-      if(heat === 'hot' && r.hotCount > 2) cost += 40;
-      if(heat === 'cold' && countHeat(test, analysis, 'cold') > 2) cost += 10;
-      if((analysis.riskyNumberSet || new Set()).has(num) && group.length < 4) cost += 10;
-      if(!best || cost < best.cost) best = { num, cost };
-    }
-    return best?.num || shuffle(candidates)[0];
-  }
-
-  function buildCandidateGroups(allNums, analysis){
-    const available = new Set(allNums);
-    const groups = [[], [], [], []];
-    const hot = shuffle((analysis.hot || []).filter(n => available.has(n)));
-    const mid = shuffle((analysis.mid || []).filter(n => available.has(n)));
-    const cold = shuffle((analysis.cold || []).filter(n => available.has(n)));
-    const queue = [
-      ...hot,
-      ...mid,
-      ...cold,
-      ...shuffle(allNums.filter(n => !hot.includes(n) && !mid.includes(n) && !cold.includes(n)))
-    ];
-
-    const consume = (num, gi) => {
-      if(!num || !available.has(num) || groups[gi].length >= 5) return false;
-      groups[gi].push(num);
-      groups[gi].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-      available.delete(num);
-      return true;
-    };
-
-    // 每組先盡量放 1 顆熱號
-    for(let gi=0; gi<4; gi++){
-      const pick = pickBestNumberForGroup(hot.filter(n=>available.has(n)), groups[gi], analysis);
-      if(pick) consume(pick, gi);
-    }
-
-    // 再依序補滿，每次都挑對該組風險最低的號碼
-    for(let round=0; round<5; round++){
-      for(let gi=0; gi<4; gi++){
-        if(groups[gi].length >= 5) continue;
-        const pool = queue.filter(n => available.has(n));
-        const pick = pickBestNumberForGroup(pool, groups[gi], analysis);
-        consume(pick, gi);
-      }
-    }
-
-    const car = [...available].sort((a,b)=>parseInt(a,10)-parseInt(b,10));
-    return { groups, car };
-  }
-
   function evaluatePartition(groups, analysis){
-    const summaries = groups.map(g => getGroupRiskSummary(g, analysis));
-    const riskyPairs = summaries.reduce((a, s)=> a + s.riskyPairs, 0);
-    const riskyTriples = summaries.reduce((a, s)=> a + s.riskyTriples, 0);
-    const hotOverload = summaries.reduce((a, s)=> a + Math.max(0, s.hotCount - 2), 0);
-    const score = riskyPairs * 120 + riskyTriples * 220 + hotOverload * 35 + summaries.reduce((a,s)=>a+s.score,0);
-    return {
-      score,
-      lowRiskGroups: summaries.filter(s => s.riskyPairs === 0 && s.riskyTriples === 0 && s.hotCount <= 2).length,
-      summaries,
-      riskyPairs,
-      riskyTriples
-    };
+    let total = 0;
+    let twoHitRisk = 0;
+    let threeHitRisk = 0;
+
+    groups.forEach(g=>{
+      total += scoreSingleGroup(g, analysis);
+      analysis.draws.forEach(draw=>{
+        const hit = intersectionCount(g, draw);
+        if(hit === 2) twoHitRisk++;
+        if(hit === 3) threeHitRisk++;
+      });
+    });
+
+    total += twoHitRisk * 1000000;
+    total += threeHitRisk * 3000000;
+    return { total, twoHitRisk, threeHitRisk };
   }
 
+  
   async function buildSmartGroups(id, analysis, onProgress){
-    const maxNum = state.lotteries[id].cfg.maxNum;
-    const allNums = Array.from({ length: maxNum }, (_, i) => String(i + 1).padStart(2, "0"));
-
-    const groupNames = [
-      $(`${id}_prize1Desc`).value.trim() || "第一組",
-      $(`${id}_prize2Desc`).value.trim() || "第二組",
-      $(`${id}_prize3Desc`).value.trim() || "第三組",
-      $(`${id}_prize4Desc`).value.trim() || "第四組",
-      $(`${id}_prize5Desc`).value.trim() || "全車號碼"
-    ];
-
-    const target = chooseAdaptiveTries();
     const startedAt = Date.now();
-    let bestResult = null;
-
-    for(let t=1; t<=target; t++){
-      const built = buildCandidateGroups(allNums, analysis);
-      const evalResult = evaluatePartition(built.groups, analysis);
-      const elapsedMs = Date.now() - startedAt;
-      if (typeof onProgress === 'function') {
-        onProgress({
-          searched: t,
-          target,
-          elapsedMs,
-          lowRiskFound: bestResult ? 1 : 0,
-          stageLabel: getStageLabel(t),
-          statusText: bestResult ? '已找到候選' : '搜尋中',
-          footerText: '以近50期高風險雙號 / 三連號、熱中冷分配為主，盡量避開同組碰撞；全車可承接熱號與高風險號。'
-        });
-      }
-
-      const groups = {
-        [groupNames[0]]: built.groups[0],
-        [groupNames[1]]: built.groups[1],
-        [groupNames[2]]: built.groups[2],
-        [groupNames[3]]: built.groups[3],
-        [groupNames[4]]: built.car
-      };
-
-      const candidate = {
-        score: evalResult.score,
-        lowRiskGroups: evalResult.lowRiskGroups,
-        analyzedDrawCount: analysis.drawCount || 0,
-        generatedTryCount: t,
-        searchedCandidates: t,
-        selectedPool: 'balanced',
-        downgraded: false,
-        elapsedMs,
-        groups,
-        riskyPairs: evalResult.riskyPairs,
-        riskyTriples: evalResult.riskyTriples
-      };
-
-      if(!bestResult || candidate.score < bestResult.score){
-        bestResult = candidate;
-      }
-
-      if(evalResult.riskyTriples === 0 && evalResult.riskyPairs <= 1 && evalResult.lowRiskGroups >= 3){
-        return candidate;
-      }
-
-      if(t % 10 === 0) await sleep(0);
-    }
-
-    return bestResult || {
-      noQualifiedResult: true,
-      analyzedDrawCount: analysis.drawCount || 0,
-      generatedTryCount: target,
-      searchedCandidates: target,
-      lowRiskGroups: 0,
-      selectedPool: 'none',
-      elapsedMs: Date.now() - startedAt
-    };
+    const target = 1;
+    if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布直接生成方案。` });
+    await sleep(30);
+    const best = buildSimpleGeneratedPlan(id, analysis);
+    const elapsedMs = Date.now() - startedAt;
+    if (typeof onProgress === 'function') onProgress({ searched: 1, target, elapsedMs, lowRiskFound: 1, stageLabel: '完成生成', statusText: '生成完成', footerText: best.whyQualified || '已完成可用方案生成。' });
+    return Object.assign({}, best, { searchedCandidates: 1, generatedTryCount: 1, elapsedMs, noQualifiedResult: false });
   }
 
-  function formatEta(ms){
+function formatEta(ms){
     if (!Number.isFinite(ms) || ms <= 0) return '估算中';
     if (ms < 1000) return `${Math.max(1, Math.round(ms))} ms`;
     return `${(ms / 1000).toFixed(1)} 秒`;
@@ -1421,7 +1263,7 @@ function cleanupNumbers(arr, maxNum){
 
     const row = document.createElement("div");
     row.className = "groupRow";
-    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk} ｜ 低風險組數：${bestResult.lowRiskGroups || 0}/4 ｜ 分析期數：${bestResult.analyzedDrawCount || 0} ｜ 搜索候選：${bestResult.searchedCandidates || bestResult.generatedTryCount || 0} ｜ 採用池：${bestResult.selectedPool === 'low' ? '低風險' : '未找到'}${bestResult.downgraded ? '（已降級）' : ''}</span>`;
+    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk}</span>`;
     box.appendChild(row);
   }
 
@@ -1905,6 +1747,14 @@ function cleanupNumbers(arr, maxNum){
         cleanupMode: els.cleanupMode.value,
         drawMode: els.drawMode.value,
         autoDownloadXlsx: els.autoDownloadXlsx.checked,
+        manualInputs: {
+          source: $(`${id}_manualSource`)?.value || '',
+          full: $(`${id}_manualFull`)?.value || '',
+          group1: $(`${id}_manualGroup1`)?.value || '',
+          group2: $(`${id}_manualGroup2`)?.value || '',
+          group3: $(`${id}_manualGroup3`)?.value || '',
+          group4: $(`${id}_manualGroup4`)?.value || ''
+        },
         prizes: [1,2,3,4,5].map(i => ({
           label: $(`${id}_prize${i}Label`).value,
           desc: $(`${id}_prize${i}Desc`).value,
@@ -1954,6 +1804,12 @@ function cleanupNumbers(arr, maxNum){
         els.cleanupMode.value = saved.cleanupMode || "trim";
         els.drawMode.value = saved.drawMode || "remove";
         els.autoDownloadXlsx.checked = !!saved.autoDownloadXlsx;
+        if($(`${id}_manualSource`)) $(`${id}_manualSource`).value = saved?.manualInputs?.source || '';
+        if($(`${id}_manualFull`)) $(`${id}_manualFull`).value = saved?.manualInputs?.full || '';
+        if($(`${id}_manualGroup1`)) $(`${id}_manualGroup1`).value = saved?.manualInputs?.group1 || '';
+        if($(`${id}_manualGroup2`)) $(`${id}_manualGroup2`).value = saved?.manualInputs?.group2 || '';
+        if($(`${id}_manualGroup3`)) $(`${id}_manualGroup3`).value = saved?.manualInputs?.group3 || '';
+        if($(`${id}_manualGroup4`)) $(`${id}_manualGroup4`).value = saved?.manualInputs?.group4 || '';
 
         if(Array.isArray(saved.prizes)){
           saved.prizes.forEach((p, idx)=>{
@@ -2062,8 +1918,7 @@ function cleanupNumbers(arr, maxNum){
         group3: order[2],
         group4: order[3],
         full: order[4]
-      },
-      analysis: s.generatedGroups.analysisMeta || null
+      }
     };
 
     const controller = new AbortController();
@@ -2189,6 +2044,7 @@ function cleanupNumbers(arr, maxNum){
     return Math.max(min, Math.min(max, value));
   }
 
+
   function buildDisplayRecommendation(row, apiRec){
     const analysis = row?.analysis || {};
     const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails.slice(0,4) : [];
@@ -2215,9 +2071,25 @@ function cleanupNumbers(arr, maxNum){
       else if(hotCount === 0 && riskyNums.length <= 1) structureType = '冷號保守';
       else if(riskyNums.length >= 3) structureType = '高風險號堆疊';
       else if(heatScore >= 60) structureType = '熱區承接';
-      return { detail, idx, pairExposure, tripleExposure, riskyNums, pairHits, tripleHits, hotCount, fingerprint, heatScore, fingerprintBucket, balanceGap, riskScore, structureType };
+      return {
+        detail,
+        idx,
+        pairExposure,
+        tripleExposure,
+        riskyNums,
+        pairHits,
+        tripleHits,
+        hotCount,
+        fingerprint,
+        heatScore,
+        fingerprintBucket,
+        balanceGap,
+        riskScore,
+        structureType
+      };
     });
 
+    const totalRisk = metrics.reduce((sum, item)=>sum + item.riskScore, 0);
     const totalPairExposure = metrics.reduce((sum, item)=>sum + item.pairExposure, 0);
     const totalTripleExposure = metrics.reduce((sum, item)=>sum + item.tripleExposure, 0);
     const totalPairHits = metrics.reduce((sum, item)=>sum + item.pairHits.length, 0);
@@ -2230,7 +2102,7 @@ function cleanupNumbers(arr, maxNum){
     const stableGroupCount = metrics.filter((item)=>item.pairHits.length === 0 && item.tripleHits.length === 0 && item.riskScore < 7).length;
     const riskyNumberCoverage = metrics.reduce((sum, item)=>sum + item.riskyNums.length, 0);
     const heatAverage = metrics.length ? metrics.reduce((sum, item)=>sum + item.heatScore, 0) / metrics.length : 0;
-    const drawCount = Number(analysis.drawCount || analysis.evaluatedWindow || 0);
+    const drawCount = Number(analysis.evaluatedWindow || analysis.drawCount || 0);
     const windowFactor = Math.min(drawCount, 100) / 100;
     const fullSize = Number(row?.groups?.full?.length || 0);
     const safest = metrics.slice().sort((a,b)=>a.riskScore - b.riskScore || a.heatScore - b.heatScore || a.idx - b.idx)[0];
@@ -2264,8 +2136,8 @@ function cleanupNumbers(arr, maxNum){
       if(safest.structureType) bestReasons.push(safest.structureType);
     }
     if(riskiest){
-      if(riskiest.tripleHits.length) worstReasons.push(`含三碰撞 ${String(riskiest.tripleHits[0]).split('-').join('、')}`);
-      if(!worstReasons.length && riskiest.pairHits.length) worstReasons.push(`含雙碰撞 ${String(riskiest.pairHits[0]).split('-').join('、')}`);
+      if(riskiest.tripleHits.length) worstReasons.push(`含三碰撞 ${String(riskiest.tripleHits[0]).replaceAll('-', '、')}`);
+      if(!worstReasons.length && riskiest.pairHits.length) worstReasons.push(`含雙碰撞 ${String(riskiest.pairHits[0]).replaceAll('-', '、')}`);
       if(riskiest.hotCount >= 3) worstReasons.push(`熱號集中 ${riskiest.hotCount} 顆`);
       if(riskiest.riskyNums.length >= 2) worstReasons.push(`高風險號 ${riskiest.riskyNums.slice(0,3).join('、')}`);
       if(!worstReasons.length) worstReasons.push(`暴露值 ${riskiest.riskScore.toFixed(1)}`);
@@ -2290,7 +2162,7 @@ function cleanupNumbers(arr, maxNum){
     const negatives = [];
     if(safest) positives.push(`最佳組是第${safest.detail.groupIndex}組：${bestReasons.slice(0,3).join('、')}`);
     positives.push(structureSummary);
-    positives.push(`穩定組數 ${stableGroupCount}/4，分析窗 ${drawCount || '-'} 期`);
+    positives.push(`穩定組數 ${stableGroupCount}/4，分析窗 ${drawCount || getAnalysisWindow()} 期`);
     if(fullSize === 19) positives.push('全車19顆完整，可直接匯出 logs');
 
     if(riskiest) negatives.push(`風險組是第${riskiest.detail.groupIndex}組：${worstReasons.slice(0,3).join('、')}`);
@@ -2391,14 +2263,6 @@ function cleanupNumbers(arr, maxNum){
       return;
     }
     try{
-      const manualGroupMap = {
-        [($(`${id}_prize1Desc`).value.trim() || '第一組')]: group1,
-        [($(`${id}_prize2Desc`).value.trim() || '第二組')]: group2,
-        [($(`${id}_prize3Desc`).value.trim() || '第三組')]: group3,
-        [($(`${id}_prize4Desc`).value.trim() || '第四組')]: group4,
-        [($(`${id}_prize5Desc`).value.trim() || '全車號碼')]: full
-      };
-      const manualAnalysis = buildTrackingAnalysisMetaFromGroups(manualGroupMap, state.lotteries[id].historyAnalysis);
       const res = await fetch(`${API_BASE}/api/manual-tracking`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2407,8 +2271,7 @@ function cleanupNumbers(arr, maxNum){
           lotteryTitle: s.cfg.title,
           confirmedAt: nowFull(),
           sourceName,
-          groups: { group1, group2, group3, group4, full },
-          analysis: manualAnalysis
+          groups: { group1, group2, group3, group4, full }
         })
       });
       const result = await res.json().catch(()=>null);
@@ -2430,180 +2293,6 @@ function cleanupNumbers(arr, maxNum){
       .map(n => parseInt(n,10))
       .filter(n => Number.isInteger(n) && n >= 1 && n <= maxNum)
       .map(n => String(n).padStart(2,'0'));
-  }
-
-
-  const manualPickerState = {
-    id: '',
-    targetKey: '',
-    maxCount: 0,
-    mainKeys: ['manualGroup1','manualGroup2','manualGroup3','manualGroup4']
-  };
-
-  function ensureManualPickerModal(){
-    if ($('manualPickerModal')) return;
-    const wrap = document.createElement('div');
-    wrap.id = 'manualPickerModal';
-    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px;';
-    wrap.innerHTML = `
-      <div style="width:min(820px,96vw);max-height:90vh;overflow:auto;background:#4d0808;border:1px solid rgba(255,210,140,.35);border-radius:18px;padding:18px;color:#ffe2b6;box-shadow:0 20px 50px rgba(0,0,0,.4);">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-          <div>
-            <div id="manualPickerTitle" style="font-size:22px;font-weight:900;">選擇號碼</div>
-            <div id="manualPickerSub" class="small muted" style="margin-top:4px;">點選 1-39 號碼，會自動排序帶入</div>
-          </div>
-          <button id="manualPickerClose" class="secondary">關閉</button>
-        </div>
-        <div id="manualPickerSummary" style="margin-top:10px;font-size:14px;"></div>
-        <div id="manualPickerGrid" style="margin-top:14px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap;">
-          <div id="manualPickerSelected" style="font-size:14px;line-height:1.8;"></div>
-          <div class="btns"><button id="manualPickerClear" class="secondary">清空本欄</button><button id="manualPickerApply" class="green">帶入這一組</button></div>
-        </div>
-      </div>`;
-    document.body.appendChild(wrap);
-    $('manualPickerClose').addEventListener('click', closeManualPicker);
-    $('manualPickerApply').addEventListener('click', applyManualPicker);
-    $('manualPickerClear').addEventListener('click', ()=>{
-      const input = $(`${manualPickerState.id}_${manualPickerState.targetKey}`);
-      if (input) input.value = '';
-      renderManualPicker();
-    });
-    wrap.addEventListener('click', (e)=>{ if (e.target === wrap) closeManualPicker(); });
-  }
-
-  function getManualFieldKeys(){
-    return ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'];
-  }
-
-  function getManualSelectedMap(id){
-    const map = {};
-    getManualFieldKeys().forEach((key)=>{
-      map[key] = parseManualGroupInput(($(`${id}_${key}`)?.value || ''), 39);
-    });
-    return map;
-  }
-
-  function getReservedNumbers(id, targetKey){
-    const selected = getManualSelectedMap(id);
-    const reserved = new Set();
-    const mainKeys = manualPickerState.mainKeys;
-    if (targetKey === 'manualFull') {
-      mainKeys.forEach((key)=> selected[key].forEach((n)=> reserved.add(n)));
-      return reserved;
-    }
-    mainKeys.forEach((key)=>{
-      if (key === targetKey) return;
-      selected[key].forEach((n)=> reserved.add(n));
-    });
-    (selected.manualFull || []).forEach((n)=> reserved.add(n));
-    return reserved;
-  }
-
-  function openManualPicker(id, targetKey, maxCount){
-    manualPickerState.id = id;
-    manualPickerState.targetKey = targetKey;
-    manualPickerState.maxCount = maxCount;
-    ensureManualPickerModal();
-    $('manualPickerModal').style.display = 'flex';
-    const labelMap = {
-      manualGroup1: '第一組', manualGroup2: '第二組', manualGroup3: '第三組', manualGroup4: '第四組', manualFull: '全車號碼'
-    };
-    $('manualPickerTitle').textContent = `選擇${labelMap[targetKey] || '號碼'}`;
-    $('manualPickerSub').textContent = `可選 ${maxCount} 顆；主四組與全車不可重複，系統會自動排序。`;
-    renderManualPicker();
-  }
-
-  function closeManualPicker(){
-    if ($('manualPickerModal')) $('manualPickerModal').style.display = 'none';
-  }
-
-  function renderManualPicker(){
-    const { id, targetKey, maxCount } = manualPickerState;
-    const input = $(`${id}_${targetKey}`);
-    if (!input) return;
-    const selected = parseManualGroupInput(input.value || '', 39);
-    const reserved = getReservedNumbers(id, targetKey);
-    $('manualPickerSummary').textContent = `已選 ${selected.length}/${maxCount} 顆`;
-    $('manualPickerSelected').textContent = selected.length ? `目前號碼：${selected.join('、')}` : '目前尚未選號';
-    const grid = $('manualPickerGrid');
-    grid.innerHTML = '';
-    for (let i=1;i<=39;i++) {
-      const n = String(i).padStart(2,'0');
-      const active = selected.includes(n);
-      const blocked = !active && reserved.has(n);
-      const full = !active && selected.length >= maxCount;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = n;
-      btn.style.cssText = `padding:10px 6px;border-radius:12px;border:1px solid rgba(255,210,140,.28);background:${active ? '#f7c873' : blocked ? 'rgba(255,255,255,.12)' : '#5d1111'};color:${active ? '#4c1200' : blocked ? 'rgba(255,255,255,.45)' : '#ffe2b6'};font-weight:800;cursor:${blocked ? 'not-allowed' : 'pointer'};opacity:${full && !active ? .45 : 1};`;
-      btn.disabled = blocked || full;
-      btn.addEventListener('click', ()=>{
-        let next = parseManualGroupInput(input.value || '', 39);
-        if (next.includes(n)) next = next.filter(x => x !== n);
-        else next.push(n);
-        next = [...new Set(next)].sort((a,b)=>Number(a)-Number(b)).slice(0, maxCount);
-        input.value = next.join(' ');
-        renderManualPicker();
-      });
-      grid.appendChild(btn);
-    }
-  }
-
-  function applyManualPicker(){
-    closeManualPicker();
-  }
-
-  function attachManualPicker(id){
-    ensureManualPickerModal();
-    const config = [
-      ['manualGroup1',5],['manualGroup2',5],['manualGroup3',5],['manualGroup4',5],['manualFull',19]
-    ];
-    config.forEach(([key, maxCount])=>{
-      const input = $(`${id}_${key}`);
-      if (!input || input.dataset.pickerBound === '1') return;
-      input.readOnly = true;
-      input.dataset.pickerBound = '1';
-      input.style.cursor = 'pointer';
-      input.addEventListener('click', ()=>openManualPicker(id, key, maxCount));
-      input.addEventListener('focus', ()=>openManualPicker(id, key, maxCount));
-    });
-  }
-
-  function fillManualRandomGroups(id){
-    const s = state.lotteries[id];
-    const analysis = s.historyAnalysis || analyzeHistoryText(id, getEls(id).historyInput.value.trim());
-    if (analysis) {
-      s.historyAnalysis = analysis;
-      renderHistoryAnalysis(id, analysis);
-    }
-    const hot = (analysis?.hot || []).slice(0, 10);
-    const cold = (analysis?.cold || []).slice(0, 10);
-    const allNums = Array.from({length:s.cfg.maxNum}, (_,i)=>String(i+1).padStart(2,'0'));
-    const mid = allNums.filter((n)=>!hot.includes(n) && !cold.includes(n));
-    const pairCounts = analysis?.pairCounts || {};
-    const tripleCounts = analysis?.tripleCounts || {};
-    const highRiskPairs = new Set((analysis?.topPairs || []).filter(([key,count])=>Number(count||0)>=2).map(([key])=>key));
-    const highRiskTriples = new Set((analysis?.topTriples || []).filter(([key,count])=>Number(count||0)>=2).map(([key])=>key));
-    const used = new Set();
-    const makePools = () => [shuffle(hot), shuffle(mid).slice(0, 15), shuffle(mid).slice(15), shuffle(cold), shuffle(cold)];
-    const groups = {
-      group1: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum),
-      group2: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum),
-      group3: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum),
-      group4: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum)
-    };
-    const riskyNumberSet = new Set();
-    highRiskPairs.forEach((key)=>key.split('-').forEach((n)=>riskyNumberSet.add(n)));
-    highRiskTriples.forEach((key)=>key.split('-').forEach((n)=>riskyNumberSet.add(n)));
-    const fullPool = [...shuffle(allNums.filter(n => !used.has(n) && riskyNumberSet.has(n))), ...shuffle(allNums.filter(n => !used.has(n) && !riskyNumberSet.has(n)))];
-    groups.full = fullPool.slice(0,19).sort((a,b)=>Number(a)-Number(b));
-    $(`${id}_manualGroup1`).value = groups.group1.join(' ');
-    $(`${id}_manualGroup2`).value = groups.group2.join(' ');
-    $(`${id}_manualGroup3`).value = groups.group3.join(' ');
-    $(`${id}_manualGroup4`).value = groups.group4.join(' ');
-    $(`${id}_manualFull`).value = groups.full.join(' ');
-    showMiniNotice(`${state.lotteries[id].cfg.title}：已一鍵填入手動追蹤號碼`, 'ok');
   }
 
 
@@ -2646,6 +2335,290 @@ function makeGroupFromPools(targetSize, pools, used, highRiskPairs, highRiskTrip
 }
 
 
+function getManualFieldLimits(fieldKey){
+  if(fieldKey === 'manualFull') return { maxCount: 19, allowOverlap: false };
+  if(/^manualGroup[1-4]$/.test(fieldKey)) return { maxCount: 5, allowOverlap: false };
+  return { maxCount: 5, allowOverlap: false };
+}
+
+function fillManualFieldsFromPlan(id, groups){
+  const names = [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組',
+    $(`${id}_prize5Desc`).value.trim() || '全車號碼'
+  ];
+  const mapping = [
+    ['manualGroup1', names[0]],
+    ['manualGroup2', names[1]],
+    ['manualGroup3', names[2]],
+    ['manualGroup4', names[3]],
+    ['manualFull', names[4]]
+  ];
+  mapping.forEach(([fieldKey, groupName]) => {
+    const input = $(`${id}_${fieldKey}`);
+    if(input){
+      const values = Array.isArray(groups[groupName]) ? groups[groupName] : [];
+      input.value = values.join(' ');
+    }
+  });
+}
+
+function clearManualFields(id){
+  ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
+    if($(`${id}_${key}`)) $(`${id}_${key}`).value = '';
+  });
+}
+
+function autoFillManualTracking(id){
+  const s = state.lotteries[id];
+  const historyText = getEls(id).historyInput.value.trim();
+  if(!historyText){
+    showMiniNotice(`${s.cfg.title}：請先同步或貼上歷史資料，再執行一鍵抽號`, 'warn');
+    return;
+  }
+  const analysis = s.historyAnalysis || analyzeHistoryText(id, historyText);
+  s.historyAnalysis = analysis;
+  renderHistoryAnalysis(id, analysis);
+  const plan = buildSimpleGeneratedPlan(id, analysis);
+  fillManualFieldsFromPlan(id, plan.groups);
+  persistAll();
+  showMiniNotice(`${s.cfg.title}：已一鍵帶入第一組到第四組與全車號碼`, 'ok');
+}
+
+function autoGenerateToLog(id){
+  const s = state.lotteries[id];
+  const historyText = getEls(id).historyInput.value.trim();
+  if(!historyText){
+    showMiniNotice(`${s.cfg.title}：請先同步或貼上歷史資料，再執行一鍵抽號`, 'warn');
+    return;
+  }
+  const analysis = s.historyAnalysis || analyzeHistoryText(id, historyText);
+  s.historyAnalysis = analysis;
+  renderHistoryAnalysis(id, analysis);
+  const plan = buildSimpleGeneratedPlan(id, analysis);
+  s.generatedGroups = plan;
+  renderGroupPreview(id, plan);
+  applyGeneratedGroupsToLog(id, plan.groups);
+  fillManualFieldsFromPlan(id, plan.groups);
+  setConfirmAvailability(id, true);
+  persistAll();
+  showMiniNotice(`${s.cfg.title}：已一鍵抽出第一組到第四組與全車號碼，logs 可直接匯出`, 'ok');
+}
+
+
+const MANUAL_SOURCE_PRESETS = ['無敵/馬上發財', '隨機生成/講難聽點39顆隨機選'];
+const manualSourceState = { lotteryId: '', presets: MANUAL_SOURCE_PRESETS.slice() };
+
+function ensureManualSourceModal(){
+  if($('manualSourceModal')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'manualSourceModal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.68);display:none;align-items:center;justify-content:center;padding:18px;z-index:10000;backdrop-filter:blur(2px)';
+  wrap.innerHTML = `
+    <div style="width:min(640px,96vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(36,6,6,.97));border:1px solid rgba(247,215,123,.24);border-radius:20px;padding:18px;color:#ffe7a8;box-shadow:0 20px 50px rgba(0,0,0,.45);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:#ffe7a8;">選擇通報名稱</div>
+          <div class="small" style="margin-top:4px;">可直接點選內定名稱，也可在下方自行輸入。</div>
+        </div>
+        <button type="button" class="secondary" id="manualSourceClose">關閉</button>
+      </div>
+      <div id="manualSourcePresetWrap" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;"></div>
+      <div style="margin-top:16px;">
+        <label class="small" for="manualSourceCustomInput">自行輸入名稱</label>
+        <input id="manualSourceCustomInput" placeholder="例如：阿明通報 / VIP牌組 / 其他自訂名稱" style="margin-top:8px;">
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap;">
+        <div id="manualSourcePreview" class="small" style="line-height:1.8;">目前尚未設定通報名稱</div>
+        <div class="btns">
+          <button type="button" class="secondary" id="manualSourceClear">清空本欄</button>
+          <button type="button" class="green" id="manualSourceApply">帶入名稱</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  $('manualSourceClose').addEventListener('click', closeManualSourcePicker);
+  $('manualSourceApply').addEventListener('click', applyManualSourcePicker);
+  $('manualSourceClear').addEventListener('click', ()=>{
+    const input = manualSourceState.lotteryId ? $(`${manualSourceState.lotteryId}_manualSource`) : null;
+    if(input) input.value = '';
+    if($('manualSourceCustomInput')) $('manualSourceCustomInput').value = '';
+    refreshManualSourcePresets();
+  });
+  $('manualSourceCustomInput').addEventListener('input', refreshManualSourcePresets);
+  $('manualSourceCustomInput').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      applyManualSourcePicker();
+    }
+  });
+  wrap.addEventListener('click', (e)=>{ if(e.target === wrap) closeManualSourcePicker(); });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && manualSourceState.lotteryId) closeManualSourcePicker();
+  });
+}
+
+function refreshManualSourcePresets(){
+  const wrap = $('manualSourcePresetWrap');
+  if(!wrap) return;
+  const currentValue = ($('manualSourceCustomInput')?.value || '').trim();
+  wrap.innerHTML = '';
+  manualSourceState.presets.forEach((name)=>{
+    const active = currentValue === name;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = name;
+    btn.className = active ? 'green' : 'secondary';
+    btn.style.whiteSpace = 'normal';
+    btn.addEventListener('click', ()=>{
+      if($('manualSourceCustomInput')) $('manualSourceCustomInput').value = name;
+      refreshManualSourcePresets();
+    });
+    wrap.appendChild(btn);
+  });
+  if($('manualSourcePreview')) $('manualSourcePreview').textContent = currentValue ? `即將帶入：${currentValue}` : '目前尚未設定通報名稱';
+}
+
+function openManualSourcePicker(id){
+  ensureManualSourceModal();
+  manualSourceState.lotteryId = id;
+  const input = $(`${id}_manualSource`);
+  if($('manualSourceCustomInput')) $('manualSourceCustomInput').value = (input?.value || '').trim();
+  refreshManualSourcePresets();
+  $('manualSourceModal').style.display = 'flex';
+  setTimeout(()=> $('manualSourceCustomInput')?.focus(), 0);
+}
+
+function closeManualSourcePicker(){
+  if($('manualSourceModal')) $('manualSourceModal').style.display = 'none';
+  manualSourceState.lotteryId = '';
+}
+
+function applyManualSourcePicker(){
+  const id = manualSourceState.lotteryId;
+  if(!id) return;
+  const input = $(`${id}_manualSource`);
+  if(input) input.value = ($('manualSourceCustomInput')?.value || '').trim();
+  persistAll();
+  closeManualSourcePicker();
+}
+
+function bindManualSourcePicker(id){
+  ensureManualSourceModal();
+  const input = $(`${id}_manualSource`);
+  if(!input || input.dataset.sourcePickerBound === '1') return;
+  input.dataset.sourcePickerBound = '1';
+  input.readOnly = true;
+  input.style.cursor = 'pointer';
+  input.addEventListener('focus', ()=>openManualSourcePicker(id));
+  input.addEventListener('click', ()=>openManualSourcePicker(id));
+}
+
+const manualPickerState = { lotteryId: '', fieldKey: '' };
+
+function collectManualSelections(id){
+  const map = {};
+  ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach((key) => {
+    map[key] = parseManualGroupInput(($(`${id}_${key}`)?.value || ''), 39);
+  });
+  return map;
+}
+
+function closeManualPicker(){
+  const overlay = $('manualPickerOverlay');
+  if(!overlay) return;
+  overlay.classList.remove('show');
+  overlay.setAttribute('aria-hidden','true');
+  manualPickerState.lotteryId = '';
+  manualPickerState.fieldKey = '';
+}
+
+function renderManualPickerBoard(){
+  const overlay = $('manualPickerOverlay');
+  const board = $('manualPickerBoard');
+  if(!overlay || !board || !manualPickerState.lotteryId || !manualPickerState.fieldKey) return;
+  const id = manualPickerState.lotteryId;
+  const fieldKey = manualPickerState.fieldKey;
+  const input = $(`${id}_${fieldKey}`);
+  if(!input) return;
+  const { maxCount } = getManualFieldLimits(fieldKey);
+  const labelMap = {
+    manualGroup1: '第一組', manualGroup2: '第二組', manualGroup3: '第三組', manualGroup4: '第四組', manualFull: '全車號碼'
+  };
+  $('manualPickerTitle').textContent = `${state.lotteries[id].cfg.title}｜${labelMap[fieldKey] || '號碼面板'}`;
+  $('manualPickerSub').textContent = `點選 1-39 號碼後自動排序帶入；本欄最多 ${maxCount} 顆。`;
+  const selections = collectManualSelections(id);
+  const current = new Set(selections[fieldKey] || []);
+  const usedByOthers = new Set();
+  Object.entries(selections).forEach(([key, vals]) => {
+    if(key === fieldKey) return;
+    vals.forEach((n) => usedByOthers.add(n));
+  });
+  board.innerHTML = '';
+  for(let i=1;i<=39;i++){
+    const num = String(i).padStart(2,'0');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `manualPickerNum${current.has(num) ? ' active' : ''}`;
+    btn.textContent = num;
+    if(usedByOthers.has(num) && !current.has(num)){
+      btn.disabled = true;
+      btn.title = '此號碼已被其他組別或全車使用';
+      btn.style.opacity = '.35';
+      btn.style.cursor = 'not-allowed';
+    }
+    btn.addEventListener('click', () => {
+      let next = parseManualGroupInput(input.value || '', 39);
+      const set = new Set(next);
+      if(set.has(num)) set.delete(num);
+      else {
+        if(usedByOthers.has(num)){
+          showMiniNotice(`${state.lotteries[id].cfg.title}：${num} 已被其他組別使用`, 'warn');
+          return;
+        }
+        if(set.size >= maxCount){
+          showMiniNotice(`${state.lotteries[id].cfg.title}：此欄最多只能選 ${maxCount} 顆`, 'warn');
+          return;
+        }
+        set.add(num);
+      }
+      next = Array.from(set).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+      input.value = next.join(' ');
+      persistAll();
+      renderManualPickerBoard();
+    });
+    board.appendChild(btn);
+  }
+}
+
+function openManualPicker(id, fieldKey){
+  const overlay = $('manualPickerOverlay');
+  if(!overlay || !$(`${id}_${fieldKey}`)) return;
+  manualPickerState.lotteryId = id;
+  manualPickerState.fieldKey = fieldKey;
+  overlay.classList.add('show');
+  overlay.setAttribute('aria-hidden','false');
+  renderManualPickerBoard();
+}
+
+if($('manualPickerClose')) $('manualPickerClose').addEventListener('click', closeManualPicker);
+if($('manualPickerDone')) $('manualPickerDone').addEventListener('click', closeManualPicker);
+if($('manualPickerClear')) $('manualPickerClear').addEventListener('click', ()=>{
+  const { lotteryId, fieldKey } = manualPickerState;
+  if(!lotteryId || !fieldKey) return;
+  const input = $(`${lotteryId}_${fieldKey}`);
+  if(!input) return;
+  input.value = '';
+  persistAll();
+  renderManualPickerBoard();
+});
+if($('manualPickerOverlay')) $('manualPickerOverlay').addEventListener('click', (e)=>{ if(e.target.id === 'manualPickerOverlay') closeManualPicker(); });
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && manualPickerState.lotteryId && manualPickerState.fieldKey) closeManualPicker();
+});
+
 function buildTrackingAnalysisMetaFromGroups(groups, analysis){
   const allNums = Object.keys((analysis && analysis.counts) || {}).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
   const hot = Array.isArray(analysis?.hot) ? analysis.hot.slice(0, 10) : [];
@@ -2653,10 +2626,8 @@ function buildTrackingAnalysisMetaFromGroups(groups, analysis){
   const mid = allNums.filter(n => !hot.includes(n) && !cold.includes(n));
   const pairCounts = analysis?.pairCounts || {};
   const tripleCounts = analysis?.tripleCounts || {};
-  const topPairs = Array.isArray(analysis?.topPairs) ? analysis.topPairs : [];
-  const topTriples = Array.isArray(analysis?.topTriples) ? analysis.topTriples : [];
-  const highRiskPairs = topPairs.filter(([key,count]) => Number(count||0) >= 2).map(([key]) => key);
-  const highRiskTriples = topTriples.filter(([key,count]) => Number(count||0) >= 2).map(([key]) => key);
+  const highRiskPairs = Array.isArray(analysis?.highRiskPairs) ? analysis.highRiskPairs : Array.from(analysis?.highRiskPairs || []);
+  const highRiskTriples = Array.isArray(analysis?.highRiskTriples) ? analysis.highRiskTriples : Array.from(analysis?.highRiskTriples || []);
   const riskyNumberSet = new Set();
   highRiskPairs.forEach(key => key.split('-').forEach(n => riskyNumberSet.add(n)));
   highRiskTriples.forEach(key => key.split('-').forEach(n => riskyNumberSet.add(n)));
@@ -2682,7 +2653,7 @@ function buildTrackingAnalysisMetaFromGroups(groups, analysis){
   });
   return {
     drawCount: Number(analysis?.drawCount || 0),
-    evaluatedWindow: Number(analysis?.drawCount || 0),
+    evaluatedWindow: Number(analysis?.evaluatedWindow || analysis?.analysisWindow || analysis?.drawCount || 0),
     counts: analysis?.counts || {},
     hotNumbers: hot,
     midNumbers: mid,
@@ -2730,35 +2701,7 @@ function buildSimpleGeneratedPlan(id, analysis){
   const twoHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,2).filter(pair => highRiskPairs.has(comboKey(pair))).length, 0);
   const threeHitRisk = mains.reduce((acc, g)=> acc + getCombinations(g,3).filter(triple => highRiskTriples.has(comboKey(triple))).length, 0);
   const hotCounts = mains.map(g => g.filter(n => hot.includes(n)).length);
-  const riskGroupDetails = mains.map((g, idx) => ({
-    groupIndex: idx + 1,
-    hotCount: g.filter(n => hot.includes(n)).length,
-    riskyNumbers: g.filter(n => riskyNumbers.has(n)),
-    riskyPairHits: getCombinations(g,2).filter(pair => highRiskPairs.has(comboKey(pair))).map(pair => pair.join('、')),
-    riskyTripleHits: getCombinations(g,3).filter(triple => highRiskTriples.has(comboKey(triple))).map(triple => triple.join('、'))
-  }));
-  return {
-    groups,
-    score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15),
-    searchedCandidates: 1,
-    analyzedDrawCount: analysis.drawCount || 0,
-    elapsedMs: 0,
-    twoHitRisk,
-    threeHitRisk,
-    lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk),
-    mediumRiskGroups: 0,
-    rejectedGroups: 0,
-    selectedPool: 'simple',
-    downgraded: false,
-    whyQualified: `已依近50期避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。`,
-    analysisMeta: (() => {
-      const meta = buildTrackingAnalysisMetaFromGroups(groups, analysis) || {};
-      meta.twoHitRisk = twoHitRisk;
-      meta.threeHitRisk = threeHitRisk;
-      meta.riskGroupDetails = riskGroupDetails;
-      return meta;
-    })()
-  };
+  return { groups, score: Math.max(60, 90 - twoHitRisk * 10 - threeHitRisk * 15), searchedCandidates: 1, analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0, elapsedMs: 0, twoHitRisk, threeHitRisk, lowRiskGroups: Math.max(0, 4 - twoHitRisk - threeHitRisk), mediumRiskGroups: 0, rejectedGroups: 0, selectedPool: 'simple', downgraded: false, whyQualified: `已依${getRecentHistoryWindowText()}避開高風險雙號 / 三連號，並將熱號拆散配置；各組熱號數：${hotCounts.join(' / ')}。` };
 }
 
 function bindEvents(id){
@@ -2790,8 +2733,6 @@ function bindEvents(id){
     $(`${id}_btnConfirmTracking`).addEventListener("click", ()=>confirmTracking(id));
     setConfirmAvailability(id, false, '請先執行自動生成');
     $(`${id}_btnManualTracking`).addEventListener("click", ()=>submitManualTracking(id));
-    if ($(`${id}_btnManualRandomFill`)) $(`${id}_btnManualRandomFill`).addEventListener("click", ()=>fillManualRandomGroups(id));
-    if ($(`${id}_btnManualClear`)) $(`${id}_btnManualClear`).addEventListener("click", ()=>{ ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key=>{ if($(`${id}_${key}`)) $(`${id}_${key}`).value=''; }); });
     $(`${id}_btnRefreshTracking`).addEventListener("click", ()=>refreshTrackingBoard(id));
     $(`${id}_btnTelegramTest`).addEventListener("click", ()=>testTelegram(id));
     $(`${id}_btnSaveTelegramConfig`).addEventListener("click", ()=>saveTelegramConfig(id));
@@ -2814,7 +2755,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   setConfirmAvailability(id, false, "系統正在生成可用方案");
   openSearchOverlay(id);
   const startedAt = Date.now();
-  updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: '分析近50期', statusText: '生成中', footerText: '系統正在分析高風險雙號 / 三連號與熱中冷分布。' });
+  updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在分析${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布。` });
   await sleep(120);
   try {
     const bestResult = buildSimpleGeneratedPlan(id, analysis);
@@ -2863,6 +2804,20 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     getEls(id).cleanupMode.addEventListener("change", persistAll);
     getEls(id).drawMode.addEventListener("change", persistAll);
 
+    if($(`${id}_btnManualRandomFill`)) $(`${id}_btnManualRandomFill`).addEventListener("click", ()=>autoFillManualTracking(id));
+    if($(`${id}_btnManualClear`)) $(`${id}_btnManualClear`).addEventListener("click", ()=>{ clearManualFields(id); persistAll(); showMiniNotice(`${state.lotteries[id].cfg.title}：已清空手動號碼`, "info"); });
+    ["manualGroup1","manualGroup2","manualGroup3","manualGroup4","manualFull"].forEach((fieldKey)=>{
+      const input = $(`${id}_${fieldKey}`);
+      if(!input) return;
+      const handler = ()=>openManualPicker(id, fieldKey);
+      input.addEventListener("focus", handler);
+      input.addEventListener("click", handler);
+      input.addEventListener("input", ()=>{
+        input.value = parseManualGroupInput(input.value || '', 39).join(' ');
+        persistAll();
+      });
+    });
+
     syncPrizeButtons(id);
   }
 
@@ -2877,7 +2832,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
 
   async function initLottery(id, restored){
     bindEvents(id);
-    attachManualPicker(id);
+    bindManualSourcePicker(id);
 
     if(restored){
       renderRestoredState(id);
