@@ -2184,6 +2184,136 @@ function cleanupNumbers(arr, maxNum){
     }
   }
 
+
+  function clampNum(value, min, max){
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function buildDisplayRecommendation(row, apiRec){
+    const analysis = row?.analysis || {};
+    const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails.slice(0,4) : [];
+    if(!details.length){
+      return apiRec || null;
+    }
+
+    const metrics = details.map((detail, idx)=>{
+      const pairExposure = Number(detail.groupPairExposure || 0);
+      const tripleExposure = Number(detail.groupTripleExposure || 0);
+      const riskyNums = Array.isArray(detail.riskyNumbers) ? detail.riskyNumbers.filter(Boolean) : [];
+      const pairHits = Array.isArray(detail.riskyPairHits) ? detail.riskyPairHits.filter(Boolean) : [];
+      const tripleHits = Array.isArray(detail.riskyTripleHits) ? detail.riskyTripleHits.filter(Boolean) : [];
+      const hotCount = Number(detail.hotCount || 0);
+      const fingerprint = Number(detail.identityFingerprint || 0);
+      const heatScore = Number(detail.groupHeatScore || 0);
+      const fingerprintBucket = Math.abs(fingerprint % 7);
+      const balanceGap = Math.abs(hotCount - 1.5) + Math.abs(pairExposure - 1.2) * 0.7 + Math.abs(tripleExposure - 0.4) * 1.2;
+      const riskScore = pairExposure * 1.35 + tripleExposure * 3.1 + riskyNums.length * 1.55 + pairHits.length * 2.7 + tripleHits.length * 4.8 + Math.max(0, hotCount - 2) * 1.35 + balanceGap * 0.9 + fingerprintBucket * 0.18;
+      let structureType = '均衡控風';
+      if(tripleHits.length || tripleExposure >= 2) structureType = '三碰撞暴露';
+      else if(pairHits.length || pairExposure >= 3) structureType = '雙碰撞偏高';
+      else if(hotCount >= 3) structureType = '熱號集中';
+      else if(hotCount === 0 && riskyNums.length <= 1) structureType = '冷號保守';
+      else if(riskyNums.length >= 3) structureType = '高風險號堆疊';
+      else if(heatScore >= 60) structureType = '熱區承接';
+      return { detail, idx, pairExposure, tripleExposure, riskyNums, pairHits, tripleHits, hotCount, fingerprint, heatScore, fingerprintBucket, balanceGap, riskScore, structureType };
+    });
+
+    const totalPairExposure = metrics.reduce((sum, item)=>sum + item.pairExposure, 0);
+    const totalTripleExposure = metrics.reduce((sum, item)=>sum + item.tripleExposure, 0);
+    const totalPairHits = metrics.reduce((sum, item)=>sum + item.pairHits.length, 0);
+    const totalTripleHits = metrics.reduce((sum, item)=>sum + item.tripleHits.length, 0);
+    const riskyGroupCount = metrics.filter((item)=>item.riskScore >= 7).length;
+    const hotCounts = metrics.map((item)=>item.hotCount);
+    const hotSpread = hotCounts.length ? Math.max(...hotCounts) - Math.min(...hotCounts) : 0;
+    const fingerprintSpread = metrics.length ? Math.max(...metrics.map((item)=>item.fingerprintBucket)) - Math.min(...metrics.map((item)=>item.fingerprintBucket)) : 0;
+    const scoreSpread = metrics.length ? Math.max(...metrics.map((item)=>item.riskScore)) - Math.min(...metrics.map((item)=>item.riskScore)) : 0;
+    const stableGroupCount = metrics.filter((item)=>item.pairHits.length === 0 && item.tripleHits.length === 0 && item.riskScore < 7).length;
+    const riskyNumberCoverage = metrics.reduce((sum, item)=>sum + item.riskyNums.length, 0);
+    const heatAverage = metrics.length ? metrics.reduce((sum, item)=>sum + item.heatScore, 0) / metrics.length : 0;
+    const drawCount = Number(analysis.drawCount || analysis.evaluatedWindow || 0);
+    const windowFactor = Math.min(drawCount, 100) / 100;
+    const fullSize = Number(row?.groups?.full?.length || 0);
+    const safest = metrics.slice().sort((a,b)=>a.riskScore - b.riskScore || a.heatScore - b.heatScore || a.idx - b.idx)[0];
+    const riskiest = metrics.slice().sort((a,b)=>b.riskScore - a.riskScore || b.heatScore - a.heatScore || a.idx - b.idx)[0];
+    const midRisk = metrics.slice().sort((a,b)=>b.riskScore - a.riskScore || b.hotCount - a.hotCount)[1];
+
+    let profile = '平衡型';
+    if(totalTripleHits >= 1 || totalTripleExposure >= 4) profile = '三碰撞警戒型';
+    else if(totalPairHits >= 2 || totalPairExposure >= 8) profile = '雙碰撞偏高型';
+    else if(hotSpread >= 3 || metrics.some((item)=>item.hotCount >= 4)) profile = '熱號偏斜型';
+    else if(stableGroupCount >= 3 && riskyNumberCoverage <= 5) profile = '均衡穩定型';
+    else if(heatAverage < 28 && riskyNumberCoverage <= 4) profile = '冷號保守型';
+    else if(heatAverage >= 55) profile = '熱區承接型';
+
+    const baseRisk = totalTripleHits * 10 + totalPairHits * 4.5 + totalTripleExposure * 2.8 + totalPairExposure * 1.7 + riskyGroupCount * 5.2 + hotSpread * 2.2 + Math.max(0, riskyNumberCoverage - 5) * 1.3;
+    const stabilityBonus = stableGroupCount * 5.5 + Math.max(0, 2 - hotSpread) * 1.4 + (fullSize === 19 ? 2.5 : 0);
+    const passTendency = clampNum(90 - baseRisk + stabilityBonus + windowFactor * 5 - Math.max(0, scoreSpread - 5) * 0.6 + (safest ? Math.max(0, 4 - safest.riskScore) * 1.1 : 0), 18, 96);
+    const reliability = clampNum(38 + windowFactor * 28 + stableGroupCount * 6.5 + fingerprintSpread * 1.8 + Math.min(scoreSpread, 12) * 1.25 - totalTripleHits * 5.5 - totalPairHits * 2.2 - Math.max(0, riskyNumberCoverage - 6) * 1.4, 26, 92);
+
+    let riskLevel = '低';
+    if(baseRisk >= 34 || totalTripleHits >= 1 || totalTripleExposure >= 4 || (riskiest && riskiest.riskScore >= 12.5)) riskLevel = '高';
+    else if(baseRisk >= 18 || totalPairHits >= 1 || totalPairExposure >= 6 || hotSpread >= 2 || (riskiest && riskiest.riskScore >= 8.5)) riskLevel = '中';
+    riskLevel = `${riskLevel}｜${profile}`;
+
+    const bestReasons = [];
+    const worstReasons = [];
+    if(safest){
+      if(safest.tripleHits.length === 0 && safest.pairHits.length === 0) bestReasons.push('未撞高風險雙/三碰');
+      if(safest.hotCount <= 2) bestReasons.push(`熱號控制 ${safest.hotCount} 顆`);
+      if(safest.riskyNums.length <= 1) bestReasons.push(`高風險號僅 ${safest.riskyNums.length} 顆`);
+      if(safest.structureType) bestReasons.push(safest.structureType);
+    }
+    if(riskiest){
+      if(riskiest.tripleHits.length) worstReasons.push(`含三碰撞 ${String(riskiest.tripleHits[0]).split('-').join('、')}`);
+      if(!worstReasons.length && riskiest.pairHits.length) worstReasons.push(`含雙碰撞 ${String(riskiest.pairHits[0]).split('-').join('、')}`);
+      if(riskiest.hotCount >= 3) worstReasons.push(`熱號集中 ${riskiest.hotCount} 顆`);
+      if(riskiest.riskyNums.length >= 2) worstReasons.push(`高風險號 ${riskiest.riskyNums.slice(0,3).join('、')}`);
+      if(!worstReasons.length) worstReasons.push(`暴露值 ${riskiest.riskScore.toFixed(1)}`);
+    }
+
+    let structureSummary = `熱號分布 ${metrics.map((item)=>item.hotCount).join('/')}`;
+    if(profile === '均衡穩定型') structureSummary += `，四組中有 ${stableGroupCount} 組屬低碰撞區`;
+    else if(profile === '熱號偏斜型') structureSummary += `，熱度落差 ${hotSpread}，有偏向單組集中的現象`;
+    else if(profile === '雙碰撞偏高型') structureSummary += `，雙碰撞 ${totalPairHits} 組、總雙號暴露 ${totalPairExposure}`;
+    else if(profile === '三碰撞警戒型') structureSummary += `，三碰撞 ${totalTripleHits} 組、總三號暴露 ${totalTripleExposure}`;
+    else if(profile === '冷號保守型') structureSummary += `，冷號比例高、整體熱區承接偏低`;
+    else if(profile === '熱區承接型') structureSummary += `，平均熱度 ${heatAverage.toFixed(1)}，偏向追近期熱區`;
+    else structureSummary += `，結構指紋差 ${fingerprintSpread}`;
+
+    let actionAdvice = '建議維持目前四組與全車配置，可直接觀察開獎。';
+    if(riskLevel.startsWith('高')) actionAdvice = `建議優先替換第${riskiest?.detail?.groupIndex || '?'}組，再重新生成一次較安全。`;
+    else if(riskLevel.startsWith('中')) actionAdvice = `建議保留第${safest?.detail?.groupIndex || '?'}組，並檢查第${riskiest?.detail?.groupIndex || '?'}組是否要換號。`;
+    else if(profile === '冷號保守型') actionAdvice = '整體偏保守，可直接追蹤；若要提高進攻性，可微調一組熱區號。';
+    else if(profile === '熱區承接型') actionAdvice = '此組偏熱區追法，適合快節奏追號；若要更穩，可替換最熱那一組。';
+
+    const positives = [];
+    const negatives = [];
+    if(safest) positives.push(`最佳組是第${safest.detail.groupIndex}組：${bestReasons.slice(0,3).join('、')}`);
+    positives.push(structureSummary);
+    positives.push(`穩定組數 ${stableGroupCount}/4，分析窗 ${drawCount || '-'} 期`);
+    if(fullSize === 19) positives.push('全車19顆完整，可直接匯出 logs');
+
+    if(riskiest) negatives.push(`風險組是第${riskiest.detail.groupIndex}組：${worstReasons.slice(0,3).join('、')}`);
+    if(midRisk && riskiest && midRisk.detail.groupIndex !== riskiest.detail.groupIndex && midRisk.riskScore >= 7.5) negatives.push(`次風險組第${midRisk.detail.groupIndex}組也偏高（${midRisk.structureType}）`);
+    negatives.push(`總雙號暴露 ${totalPairExposure}、總三號暴露 ${totalTripleExposure}`);
+    negatives.push(actionAdvice);
+
+    return {
+      trackingId: row?.id || apiRec?.trackingId || '',
+      passTendency: Number(passTendency.toFixed(1)),
+      riskLevel,
+      reliability: Number(reliability.toFixed(1)),
+      positives: Array.from(new Set(positives)).slice(0,4),
+      negatives: Array.from(new Set(negatives)).slice(0,4),
+      bestGroupText: safest ? `第${safest.detail.groupIndex}組最穩：${bestReasons.slice(0,3).join('、')}` : '',
+      riskGroupText: riskiest ? `第${riskiest.detail.groupIndex}組風險最高：${worstReasons.slice(0,3).join('、')}` : '',
+      structureSummary,
+      actionAdvice,
+      profile
+    };
+  }
+
+
   async function refreshTrackingBoard(id, options = {}){
     const box = $(`${id}_trackingBoard`);
     if(!box) return;
@@ -2214,13 +2344,13 @@ function cleanupNumbers(arr, maxNum){
           .concat([row.groups?.full?.length ? `全車 ${row.groups.full.join('、')}` : ''])
           .filter(Boolean)
           .join('<br>');
-        const rec = recommendMap.get(row.id || '');
+        const rec = buildDisplayRecommendation(row, recommendMap.get(row.id || ''));
         const recHtml = rec ? `<div class="stats" style="margin-top:8px;">
           <div class="stat"><b>過關傾向</b><span>${escapeHtml(String(rec.passTendency ?? rec.predictedPassRate))}%</span></div>
           <div class="stat"><b>風險等級</b><span>${escapeHtml(rec.riskLevel || '-')}</span></div>
           <div class="stat"><b>分析可靠度</b><span>${escapeHtml(String(rec.reliability ?? rec.confidence ?? '-'))}</span></div>
         </div>
-        <div class="small" style="margin-top:8px;">正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
+        <div class="small" style="margin-top:8px;">最佳組：${escapeHtml(rec.bestGroupText || '—')}<br>風險組：${escapeHtml(rec.riskGroupText || '—')}<br>結構：${escapeHtml(rec.structureSummary || '—')}<br>建議：${escapeHtml(rec.actionAdvice || '—')}<br>正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
         return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div>${recHtml}<div class="btns" style="margin-top:8px;"><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
       }).join('');
       Array.from(box.querySelectorAll('.btnCancelTracking')).forEach((btn)=>{
