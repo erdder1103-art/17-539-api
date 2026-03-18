@@ -97,6 +97,10 @@ function buildRecommendationReply(type) {
     lines.push(`分析可靠度：${row.reliability}`);
     lines.push(`正向：${row.positives?.join('、') || '—'}`);
     lines.push(`風險：${row.negatives?.join('、') || '—'}`);
+    if (Array.isArray(row.groupBreakdown) && row.groupBreakdown.length) {
+      lines.push('分組細節：');
+      row.groupBreakdown.slice(0, 4).forEach((line) => lines.push(`- ${line}`));
+    }
     if (idx < compare.recommendations.length - 1 && idx < 4) lines.push('', '--------------------', '');
   });
   if (compare.best) {

@@ -1899,19 +1899,22 @@ function formatEta(ms){
   async function confirmTracking(id){
     const s = state.lotteries[id];
     if(!s.generatedGroups || !s.generatedGroups.groups || s.generatedGroups.noQualifiedResult){
-      showMiniNotice(`${s.cfg.title}：目前沒有合格低風險方案，請先執行自動生成搜尋`, "warn");
-      return;
+      const message = `${s.cfg.title}：目前沒有合格低風險方案，請先執行自動生成搜尋`;
+      showMiniNotice(message, "warn");
+      return { ok:false, message };
     }
 
     if(state.trackingSubmitLocks[id]){
-      showMiniNotice(`${s.cfg.title}：通報處理中，請勿重複點擊`, "warn");
-      return;
+      const message = `${s.cfg.title}：通報處理中，請勿重複點擊`;
+      showMiniNotice(message, "warn");
+      return { ok:false, message, busy:true };
     }
 
     const btn = $(`${id}_btnConfirmTracking`);
     if(btn && btn.disabled){
-      showMiniNotice(`${s.cfg.title}：通報處理中，請稍候`, "warn");
-      return;
+      const message = `${s.cfg.title}：通報處理中，請稍候`;
+      showMiniNotice(message, "warn");
+      return { ok:false, message, busy:true };
     }
 
     const oldText = btn ? btn.textContent : "";
@@ -1955,12 +1958,17 @@ function formatEta(ms){
       const result = await postJsonApi('/api/confirm-tracking', payload);
       if(result?.busy){
         showMiniNotice(`${s.cfg.title}：${result.message || "通報處理中，請勿重複點擊"}`, "warn");
+        return { ok:false, message: result.message || '通報處理中，請勿重複點擊', busy:true };
       }else{
-        showMiniNotice(`${s.cfg.title}：${result.message || "通報已送出"}`, "ok");
+        const message = result.message || "通報已送出";
+        showMiniNotice(`${s.cfg.title}：${message}`, "ok");
         refreshTrackingBoard(id, { silent: true });
+        return { ok:true, message, data: result };
       }
     }catch(err){
-      showMiniNotice(`${s.cfg.title}：通報失敗：${err.message || '未知錯誤'}`, "warn");
+      const message = `通報失敗：${err.message || '未知錯誤'}`;
+      showMiniNotice(`${s.cfg.title}：${message}`, "warn");
+      return { ok:false, message };
     }finally{
       state.trackingSubmitLocks[id] = false;
       if(btn){
@@ -2026,6 +2034,7 @@ function formatEta(ms){
       if(!result?.ok) throw new Error(result?.message || '取消追蹤失敗');
       showMiniNotice(`${title}：${result.message || '已取消追蹤'}`, 'ok');
       await refreshTrackingBoard(id, { silent: true });
+      return { ok:true, message, data: result };
     }catch(err){
       showMiniNotice(`${title}：取消追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }
@@ -2237,45 +2246,47 @@ function formatEta(ms){
     const group4 = parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum);
     const full = parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum);
     if(!sourceName){
-      showMiniNotice(`${s.cfg.title}：請先輸入通報名稱`, 'warn');
-      return;
+      const message = `${s.cfg.title}：請先輸入通報名稱`;
+      showMiniNotice(message, 'warn');
+      return { ok:false, message };
     }
     const groups = [group1, group2, group3, group4];
     if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
-      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼`, 'warn');
-      return;
+      const message = `${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼`;
+      showMiniNotice(message, 'warn');
+      return { ok:false, message };
     }
     const merged = groups.flat();
     if(new Set(merged).size !== merged.length){
-      showMiniNotice(`${s.cfg.title}：手動第一組到第四組之間不可重複`, 'warn');
-      return;
+      const message = `${s.cfg.title}：手動第一組到第四組之間不可重複`;
+      showMiniNotice(message, 'warn');
+      return { ok:false, message };
     }
     if(full.length !== 19 || new Set(full).size !== 19){
-      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼`, 'warn');
-      return;
+      const message = `${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼`;
+      showMiniNotice(message, 'warn');
+      return { ok:false, message };
     }
     try{
-      const res = await fetch(`${API_BASE}/api/manual-tracking`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lotteryType: id === 'ttl' ? 'ttl' : '539',
-          lotteryTitle: s.cfg.title,
-          confirmedAt: nowFull(),
-          sourceName,
-          groups: { group1, group2, group3, group4, full }
-        })
+      const result = await postJsonApi('/api/manual-tracking', {
+        lotteryType: id === 'ttl' ? 'ttl' : '539',
+        lotteryTitle: s.cfg.title,
+        confirmedAt: nowFull(),
+        sourceName,
+        groups: { group1, group2, group3, group4, full }
       });
-      const result = await res.json().catch(()=>null);
-      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      if(!result?.ok) throw new Error(result?.message || '通報失敗');
       const fullCount = result?.validation?.groupSizes?.full || full.length;
-      showMiniNotice(`${s.cfg.title}：${result.message || '已新增手動追蹤'}（全車 ${fullCount} 顆）`, 'ok');
+      const message = `${result.message || '已新增手動追蹤'}（全車 ${fullCount} 顆）`;
+      showMiniNotice(`${s.cfg.title}：${message}`, 'ok');
       ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
         if($(`${id}_${key}`)) $(`${id}_${key}`).value = '';
       });
       await refreshTrackingBoard(id, { silent: true });
     }catch(err){
-      showMiniNotice(`${s.cfg.title}：手動追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
+      const message = `手動追蹤失敗：${err.message || '未知錯誤'}`;
+      showMiniNotice(`${s.cfg.title}：${message}`, 'warn');
+      return { ok:false, message };
     }
   }
 
@@ -2399,9 +2410,6 @@ function autoGenerateToLog(id){
   showMiniNotice(`${s.cfg.title}：已一鍵抽出第一組到第四組與全車號碼，logs 可直接匯出`, 'ok');
 }
 
-
-const TASK_SOURCE_PRESETS = ['手動追蹤', '一鍵任務', 'VIP通報', '系統方案', '防2/3'];
-const taskCenterPickerState = { sourcePresets: TASK_SOURCE_PRESETS.slice() };
 
 const MANUAL_SOURCE_PRESETS = ['無敵/馬上發財', '隨機生成/講難聽點39顆隨機選'];
 const manualSourceState = { lotteryId: '', presets: MANUAL_SOURCE_PRESETS.slice() };
@@ -2898,16 +2906,8 @@ function ensureTaskCenterUI(){
             <div><label class="small">執行方式</label><select id="taskMode"><option value="smart_generate">防2/3 自動生成</option><option value="manual_submit">手動追蹤送出</option><option value="manual_fill">一鍵填入手動欄</option><option value="onekey_generate">一鍵抽號到 logs</option><option value="confirm_generated">系統方案直接通報</option></select></div>
           </div>
           <div class="row" style="margin-top:10px;">
-            <div>
-              <label class="small">通報名稱</label>
-              <input id="taskSourceName" placeholder="點我選擇內建名稱或自訂名稱" readonly>
-              <button type="button" class="secondary inlineFieldBtn" id="taskPickSourceBtn">點此彈窗選名稱</button>
-            </div>
-            <div>
-              <label class="small">預定時間（排隊顯示）</label>
-              <input id="taskPlanTime" placeholder="點我彈窗選擇時間" readonly>
-              <button type="button" class="secondary inlineFieldBtn" id="taskPickTimeBtn">點此彈窗選時間</button>
-            </div>
+            <div><label class="small">通報名稱</label><input id="taskSourceName" placeholder="手動追蹤 / 一鍵任務可先指定名稱"></div>
+            <div><label class="small">預定時間（排隊顯示）</label><input id="taskPlanTime" placeholder="例如：今晚 20:30 / 開獎前 10 分鐘"></div>
           </div>
           <div style="margin-top:10px;"><label class="small">備註</label><input id="taskRemark" placeholder="例如：先跑天天樂，再跑 539；或指定這次用途"></div>
           <div class="btns">
@@ -2922,6 +2922,8 @@ function ensureTaskCenterUI(){
             <button type="button" class="secondary" id="taskJumpTTL">切到天天樂</button>
             <button type="button" class="secondary" id="taskJump539">切到 539</button>
             <button type="button" class="secondary" id="taskRefreshBothBoards">刷新雙彩種追蹤</button>
+            <button type="button" class="secondary" id="taskNotifyTTL">通報天天樂</button>
+            <button type="button" class="secondary" id="taskNotify539">通報539</button>
           </div>
           <div id="taskQuickStatus" class="small" style="margin-top:12px;line-height:1.8;"></div>
         </div>
@@ -2936,10 +2938,6 @@ function ensureTaskCenterUI(){
   $('taskCenterRefresh').addEventListener('click', renderTaskQueueBoard);
   $('taskCreateBtn').addEventListener('click', ()=>createTaskFromCenter(false));
   $('taskCreateAndRunBtn').addEventListener('click', ()=>createTaskFromCenter(true));
-  $('taskPickSourceBtn').addEventListener('click', openTaskSourcePicker);
-  $('taskPickTimeBtn').addEventListener('click', openTaskTimePicker);
-  $('taskSourceName').addEventListener('click', openTaskSourcePicker);
-  $('taskPlanTime').addEventListener('click', openTaskTimePicker);
   $('taskJumpTTL').addEventListener('click', ()=>jumpToLottery('ttl'));
   $('taskJump539').addEventListener('click', ()=>jumpToLottery('l539'));
   $('taskRefreshBothBoards').addEventListener('click', async ()=>{
@@ -2947,158 +2945,9 @@ function ensureTaskCenterUI(){
     renderTaskQuickStatus();
     showMiniNotice('雙彩種追蹤清單已刷新', 'ok');
   });
+  $('taskNotifyTTL').addEventListener('click', ()=>notifyLotteryFromTaskCenter('ttl'));
+  $('taskNotify539').addEventListener('click', ()=>notifyLotteryFromTaskCenter('l539'));
   modal.addEventListener('click', (e)=>{ if(e.target === modal) closeTaskCenter(); });
-}
-
-function ensureTaskCenterPickerUI(){
-  if(!$('taskSourcePickerModal')){
-    const sourceModal = document.createElement('div');
-    sourceModal.id = 'taskSourcePickerModal';
-    sourceModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.68);display:none;align-items:center;justify-content:center;padding:18px;z-index:10040;backdrop-filter:blur(2px)';
-    sourceModal.innerHTML = `
-      <div style="width:min(640px,96vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(36,6,6,.97));border:1px solid rgba(247,215,123,.24);border-radius:20px;padding:18px;color:#ffe7a8;box-shadow:0 20px 50px rgba(0,0,0,.45);">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-          <div>
-            <div style="font-size:20px;font-weight:800;color:#ffe7a8;">選擇通報名稱</div>
-            <div class="small" style="margin-top:4px;">可點內建名稱，也可自行輸入後帶入。</div>
-          </div>
-          <button type="button" class="secondary" id="taskSourcePickerClose">關閉</button>
-        </div>
-        <div id="taskSourcePresetWrap" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;"></div>
-        <div style="margin-top:16px;">
-          <label class="small" for="taskSourceCustomInput">自行輸入名稱</label>
-          <input id="taskSourceCustomInput" placeholder="例如：阿明通報 / VIP牌組 / 晚場任務" style="margin-top:8px;">
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap;">
-          <div id="taskSourcePreview" class="small" style="line-height:1.8;">目前尚未設定通報名稱</div>
-          <div class="btns">
-            <button type="button" class="secondary" id="taskSourceClear">清空</button>
-            <button type="button" class="green" id="taskSourceApply">帶入名稱</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(sourceModal);
-    $('taskSourcePickerClose').addEventListener('click', closeTaskSourcePicker);
-    $('taskSourceApply').addEventListener('click', applyTaskSourcePicker);
-    $('taskSourceClear').addEventListener('click', ()=>{ if($('taskSourceCustomInput')) $('taskSourceCustomInput').value=''; refreshTaskSourcePresets(); if($('taskSourceName')) $('taskSourceName').value=''; });
-    $('taskSourceCustomInput').addEventListener('input', refreshTaskSourcePresets);
-    $('taskSourceCustomInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); applyTaskSourcePicker(); } });
-    sourceModal.addEventListener('click', (e)=>{ if(e.target===sourceModal) closeTaskSourcePicker(); });
-  }
-
-  if(!$('taskTimePickerModal')){
-    const timeModal = document.createElement('div');
-    timeModal.id = 'taskTimePickerModal';
-    timeModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.68);display:none;align-items:center;justify-content:center;padding:18px;z-index:10040;backdrop-filter:blur(2px)';
-    timeModal.innerHTML = `
-      <div style="width:min(640px,96vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(36,6,6,.97));border:1px solid rgba(247,215,123,.24);border-radius:20px;padding:18px;color:#ffe7a8;box-shadow:0 20px 50px rgba(0,0,0,.45);">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-          <div>
-            <div style="font-size:20px;font-weight:800;color:#ffe7a8;">選擇預定時間</div>
-            <div class="small" style="margin-top:4px;">這裡是任務排隊顯示時間，不會自動排程。</div>
-          </div>
-          <button type="button" class="secondary" id="taskTimePickerClose">關閉</button>
-        </div>
-        <div class="small" style="margin-top:16px;">快捷時間</div>
-        <div id="taskTimeQuickWrap" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;">
-          <button type="button" class="secondary taskTimeQuickBtn" data-value="立即執行">立即執行</button>
-          <button type="button" class="secondary taskTimeQuickBtn" data-value="今晚 20:30">今晚 20:30</button>
-          <button type="button" class="secondary taskTimeQuickBtn" data-value="今晚 21:00">今晚 21:00</button>
-          <button type="button" class="secondary taskTimeQuickBtn" data-value="今晚 21:30">今晚 21:30</button>
-          <button type="button" class="secondary taskTimeQuickBtn" data-value="開獎前 10 分鐘">開獎前 10 分鐘</button>
-        </div>
-        <div class="row" style="margin-top:16px;">
-          <div><label class="small">日期</label><input id="taskDateInput" type="date"></div>
-          <div><label class="small">時間</label><input id="taskClockInput" type="time" step="60"></div>
-        </div>
-        <div id="taskTimePreview" class="small" style="margin-top:16px;line-height:1.8;">目前尚未設定時間</div>
-        <div class="btns">
-          <button type="button" class="secondary" id="taskTimeClear">清空</button>
-          <button type="button" class="green" id="taskTimeApply">帶入時間</button>
-        </div>
-      </div>`;
-    document.body.appendChild(timeModal);
-    $('taskTimePickerClose').addEventListener('click', closeTaskTimePicker);
-    $('taskTimeClear').addEventListener('click', ()=>{ if($('taskDateInput')) $('taskDateInput').value=''; if($('taskClockInput')) $('taskClockInput').value=''; if($('taskPlanTime')) $('taskPlanTime').value=''; refreshTaskTimePreview(); });
-    $('taskTimeApply').addEventListener('click', applyTaskTimePicker);
-    document.querySelectorAll('.taskTimeQuickBtn').forEach(btn=>btn.addEventListener('click', ()=>{ if($('taskPlanTime')) $('taskPlanTime').value=btn.dataset.value || ''; refreshTaskTimePreview(); }));
-    $('taskDateInput').addEventListener('input', refreshTaskTimePreview);
-    $('taskClockInput').addEventListener('input', refreshTaskTimePreview);
-    timeModal.addEventListener('click', (e)=>{ if(e.target===timeModal) closeTaskTimePicker(); });
-  }
-}
-
-function refreshTaskSourcePresets(){
-  const wrap = $('taskSourcePresetWrap');
-  if(!wrap) return;
-  const currentValue = ($('taskSourceCustomInput')?.value || '').trim();
-  wrap.innerHTML = '';
-  taskCenterPickerState.sourcePresets.forEach((name)=>{
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = name;
-    btn.className = currentValue === name ? 'green' : 'secondary';
-    btn.addEventListener('click', ()=>{ $('taskSourceCustomInput').value = name; refreshTaskSourcePresets(); });
-    wrap.appendChild(btn);
-  });
-  $('taskSourcePreview').textContent = currentValue ? `即將帶入：${currentValue}` : '目前尚未設定通報名稱';
-}
-
-function openTaskSourcePicker(){
-  ensureTaskCenterPickerUI();
-  if($('taskSourceCustomInput')) $('taskSourceCustomInput').value = ($('taskSourceName')?.value || '').trim();
-  refreshTaskSourcePresets();
-  $('taskSourcePickerModal').style.display = 'flex';
-  setTimeout(()=> $('taskSourceCustomInput')?.focus(), 0);
-}
-
-function closeTaskSourcePicker(){
-  if($('taskSourcePickerModal')) $('taskSourcePickerModal').style.display = 'none';
-}
-
-function applyTaskSourcePicker(){
-  if($('taskSourceName')) $('taskSourceName').value = ($('taskSourceCustomInput')?.value || '').trim();
-  closeTaskSourcePicker();
-}
-
-function parseTaskPlanValue(value){
-  const text = String(value || '').trim();
-  const m = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})$/);
-  return m ? { date:m[1], time:m[2] } : { date:'', time:'' };
-}
-
-function refreshTaskTimePreview(){
-  const directValue = ($('taskPlanTime')?.value || '').trim();
-  const date = $('taskDateInput')?.value || '';
-  const clock = $('taskClockInput')?.value || '';
-  let finalValue = '';
-  if(date && clock) finalValue = `${date} ${clock}`;
-  else if(date) finalValue = date;
-  else if(clock) finalValue = clock;
-  else finalValue = directValue;
-  $('taskTimePreview').textContent = finalValue ? `即將帶入：${finalValue}` : '目前尚未設定時間';
-}
-
-function openTaskTimePicker(){
-  ensureTaskCenterPickerUI();
-  const current = parseTaskPlanValue($('taskPlanTime')?.value || '');
-  if($('taskDateInput')) $('taskDateInput').value = current.date;
-  if($('taskClockInput')) $('taskClockInput').value = current.time;
-  refreshTaskTimePreview();
-  $('taskTimePickerModal').style.display = 'flex';
-}
-
-function closeTaskTimePicker(){
-  if($('taskTimePickerModal')) $('taskTimePickerModal').style.display = 'none';
-}
-
-function applyTaskTimePicker(){
-  const date = ($('taskDateInput')?.value || '').trim();
-  const clock = ($('taskClockInput')?.value || '').trim();
-  const current = ($('taskPlanTime')?.value || '').trim();
-  const finalValue = date && clock ? `${date} ${clock}` : date || clock || current;
-  if($('taskPlanTime')) $('taskPlanTime').value = finalValue;
-  closeTaskTimePicker();
 }
 
 function renderTaskQuickStatus(){
@@ -3106,7 +2955,7 @@ function renderTaskQuickStatus(){
   if(!el) return;
   const ttlPending = (state.taskCenter.queue || []).filter(x=>x.lotteryId==='ttl' && x.status==='pending').length;
   const l539Pending = (state.taskCenter.queue || []).filter(x=>x.lotteryId==='l539' && x.status==='pending').length;
-  el.innerHTML = `天天樂待執行：<b>${ttlPending}</b>｜539待執行：<b>${l539Pending}</b><br>可先在各自面板準備手動號碼，再回這裡排任務與執行。`;
+  el.innerHTML = `天天樂待執行：<b>${ttlPending}</b>｜539待執行：<b>${l539Pending}</b><br>天天樂可通報：<b>${escapeHtml(getNotifyActionLabel('ttl'))}</b>｜539可通報：<b>${escapeHtml(getNotifyActionLabel('l539'))}</b><br>可先在各自面板準備手動號碼，再回這裡排任務與執行。`;
 }
 
 function openTaskCenter(){
@@ -3123,6 +2972,35 @@ function closeTaskCenter(){
 function jumpToLottery(id){
   const wrap = $(`${id}_wrap`);
   if(wrap) wrap.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function getNotifyActionLabel(id){
+  const s = state.lotteries[id];
+  if(s?.generatedGroups && !s.generatedGroups.noQualifiedResult) return '系統方案通報';
+  const hasManual = !!(($(`${id}_manualSource`)?.value || '').trim()) && ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].every(key => (($(`${id}_${key}`)?.value || '').trim()));
+  return hasManual ? '手動追蹤通報' : '目前無可通報內容';
+}
+
+async function notifyLotteryFromTaskCenter(id){
+  const s = state.lotteries[id];
+  if(!s) return;
+  try{
+    jumpToLottery(id);
+    const hasGenerated = !!(s.generatedGroups && !s.generatedGroups.noQualifiedResult);
+    if(hasGenerated){
+      const result = await confirmTracking(id);
+      if(!result?.ok) throw new Error(result?.message || '系統方案通報失敗');
+      renderTaskQueueBoard();
+      renderTaskQuickStatus();
+      return;
+    }
+    const result = await submitManualTracking(id);
+    if(!result?.ok) throw new Error(result?.message || '手動追蹤通報失敗');
+    renderTaskQueueBoard();
+    renderTaskQuickStatus();
+  }catch(err){
+    showMiniNotice(`${s.cfg.title}：${err.message || '通報失敗'}`, 'warn');
+  }
 }
 
 function buildTaskPayloadFromCenter(){
@@ -3174,12 +3052,14 @@ async function executeTask(task){
     if(!state.lotteries[id].generatedGroups){
       throw new Error('尚未有可通報的系統方案，請先跑防2/3自動生成');
     }
-    await confirmTracking(id);
-    return `${title} 已送出系統方案通報`;
+    const result = await confirmTracking(id);
+    if(!result?.ok) throw new Error(result?.message || '系統方案通報失敗');
+    return result.message || `${title} 已送出系統方案通報`;
   }
   if(task.mode === 'manual_submit'){
-    await submitManualTracking(id);
-    return `${title} 已送出手動追蹤`;
+    const result = await submitManualTracking(id);
+    if(!result?.ok) throw new Error(result?.message || '手動追蹤送出失敗');
+    return result.message || `${title} 已送出手動追蹤`;
   }
   throw new Error('未知任務模式');
 }
@@ -3206,6 +3086,38 @@ async function executeTaskById(taskId){
   saveTaskQueue();
   renderTaskQueueBoard();
   renderTaskQuickStatus();
+}
+
+async function notifyTaskById(taskId){
+  const task = (state.taskCenter.queue || []).find(x=>x.id === taskId);
+  if(!task) return;
+  const id = task.lotteryId === 'ttl' ? 'ttl' : 'l539';
+  const title = state.lotteries[id].cfg.title;
+  try{
+    let result = null;
+    if(task.mode === 'smart_generate'){
+      result = await confirmTracking(id);
+    }else if(task.mode === 'manual_fill'){
+      result = await submitManualTracking(id);
+    }else{
+      throw new Error('這個任務不支援額外通報');
+    }
+    if(!result?.ok) throw new Error(result?.message || '通報失敗');
+    task.executedAt = nowFull();
+    task.lastMessage = result.message || `${title} 已完成通報`;
+    task.status = 'done';
+    saveTaskQueue();
+    renderTaskQueueBoard();
+    renderTaskQuickStatus();
+  }catch(err){
+    task.executedAt = nowFull();
+    task.status = 'error';
+    task.lastMessage = err?.message || '通報失敗';
+    saveTaskQueue();
+    renderTaskQueueBoard();
+    renderTaskQuickStatus();
+    showMiniNotice(`${title}：${task.lastMessage}`, 'warn');
+  }
 }
 
 function removeTaskById(taskId){
@@ -3249,6 +3161,7 @@ function renderTaskQueueBoard(){
         </div>
         <div class="btns" style="margin-top:0;">
           ${task.status !== 'running' ? `<button type="button" class="secondary" onclick="window.__taskRun('${task.id}')">執行</button>` : ''}
+          ${task.status !== 'running' && (task.mode === 'smart_generate' || task.mode === 'manual_fill') ? `<button type="button" class="green" onclick="window.__taskNotify('${task.id}')">通報</button>` : ''}
           <button type="button" class="secondary" onclick="window.__taskClone('${task.id}')">複製</button>
           <button type="button" class="danger" onclick="window.__taskRemove('${task.id}')">刪除</button>
         </div>
@@ -3269,6 +3182,7 @@ function renderTaskQueueBoard(){
     window.__taskRun = (taskId) => executeTaskById(taskId);
     window.__taskRemove = (taskId) => removeTaskById(taskId);
     window.__taskClone = (taskId) => rerunTaskById(taskId);
+    window.__taskNotify = (taskId) => notifyTaskById(taskId);
 
     await initLottery("ttl", restored);
     await initLottery("l539", restored);
