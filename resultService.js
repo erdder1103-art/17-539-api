@@ -573,7 +573,7 @@ function formatRiskDetailGroup(detail) {
 
 function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
   const useProfile = profile || getAnalysisProfile(tracking);
-  const { analysis, details, totalPairHits, totalTripleHits, hotCounts, pairExposure, tripleExposure, identityHeatScores } = useProfile;
+  const { analysis, details, totalPairHits, totalTripleHits, hotCounts, pairExposure, tripleExposure, identityHeatScores, identityFingerprints } = useProfile;
   const positives = [];
   const negatives = [];
   if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || 50}期資料檢查主四組碰撞風險`);
@@ -584,10 +584,13 @@ function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
     if (aRisk !== bRisk) return aRisk - bRisk;
     return Number(a.identityHeatScore || 0) - Number(b.identityHeatScore || 0);
   });
+  const heatSpread = hotCounts.length ? `${hotCounts.join('/')}` : '-';
   if (totalTripleHits === 0) positives.push('主四組未落入高風險三連號同組');
+  else positives.push(`主四組僅 ${totalTripleHits} 組命中高風險三連號`);
   if (totalPairHits === 0) positives.push('主四組未命中高風險雙號同組');
-  if (hotCounts.length && Math.max(...hotCounts) <= 2) positives.push('熱號已拆分配置於不同分組');
-  if (safest[0]) positives.push(`第${safest[0].groupIndex}組碰撞密度最低`);
+  else positives.push(`主四組共有 ${totalPairHits} 組碰到高風險雙號`);
+  positives.push(`主四組熱號分布 ${heatSpread}`);
+  if (safest[0]) positives.push(`第${safest[0].groupIndex}組碰撞密度最低（指紋 ${Number(safest[0].identityFingerprint || 0) % 1000}）`);
   if (features.fullCoverage === 19) positives.push('全車19顆完整承接補位號碼');
 
   details.forEach((detail) => {
@@ -598,18 +601,17 @@ function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
     else if (pairHits.length) negatives.push(`第${detail.groupIndex}組含高風險雙號 ${String(pairHits[0]).split('-').join('、')}`);
     else if (riskyNums.length >= 2) negatives.push(`第${detail.groupIndex}組高風險號偏多（${riskyNums.slice(0, 3).join('、')}）`);
     else if (Number(detail.hotCount || 0) >= 3) negatives.push(`第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`);
+    else negatives.push(`第${detail.groupIndex}組暴露值 ${Number(detail.groupPairExposure || 0) + Number(detail.groupTripleExposure || 0) * 2}`);
   });
 
-  if (!negatives.length) {
-    const riskiest = details.slice().sort((a, b) => {
-      const aRisk = Number(a.groupPairExposure || 0) + Number(a.groupTripleExposure || 0) * 2 + (Array.isArray(a.riskyNumbers) ? a.riskyNumbers.length : 0) + Number(a.hotCount || 0) * 0.5;
-      const bRisk = Number(b.groupPairExposure || 0) + Number(b.groupTripleExposure || 0) * 2 + (Array.isArray(b.riskyNumbers) ? b.riskyNumbers.length : 0) + Number(b.hotCount || 0) * 0.5;
-      if (aRisk !== bRisk) return bRisk - aRisk;
-      return Number(b.identityHeatScore || 0) - Number(a.identityHeatScore || 0);
-    });
-    if (riskiest[0]) negatives.push(`第${riskiest[0].groupIndex}組需優先留意，組內熱度與碰撞暴露相對較高`);
-    else negatives.push('主四組僅有輕微風險暴露，暫不影響整體判讀');
-  }
+  const mostExposed = details.slice().sort((a, b) => {
+    const aRisk = Number(a.groupPairExposure || 0) + Number(a.groupTripleExposure || 0) * 2 + (Array.isArray(a.riskyNumbers) ? a.riskyNumbers.length : 0) + Number(a.hotCount || 0) * 0.5;
+    const bRisk = Number(b.groupPairExposure || 0) + Number(b.groupTripleExposure || 0) * 2 + (Array.isArray(b.riskyNumbers) ? b.riskyNumbers.length : 0) + Number(b.hotCount || 0) * 0.5;
+    if (aRisk !== bRisk) return bRisk - aRisk;
+    return Number(b.identityHeatScore || 0) - Number(a.identityHeatScore || 0);
+  });
+  if (mostExposed[0]) negatives.unshift(`第${mostExposed[0].groupIndex}組需優先留意（熱度 ${mostExposed[0].hotCount || 0}、雙號暴露 ${mostExposed[0].groupPairExposure || 0}、三號暴露 ${mostExposed[0].groupTripleExposure || 0}）`);
+  if ((identityFingerprints || []).length) positives.push(`整體結構指紋 ${identityFingerprints.map(v => Number(v || 0) % 1000).join('/')}`);
   return { positives: dedupeLabels(positives), negatives: dedupeLabels(negatives) };
 }
 
@@ -701,6 +703,7 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   reliability += Math.max(0, 4 - denseRiskGroups) * 1.0;
   reliability += Math.max(0, 10 - hotSpreadPenalty) * 0.25;
   reliability += ((totalIdentityFingerprint % 29) * 0.09);
+  reliability += ((totalPairExposure + totalTripleExposure * 2 + totalHeatScore) % 11) * 0.17;
   reliability = Math.max(28, Math.min(89, reliability));
 
   let riskLevel = '低';
