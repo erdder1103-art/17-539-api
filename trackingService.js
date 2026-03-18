@@ -52,6 +52,14 @@ function ensureMainGroupsUnique(parsed, labelPrefix = '') {
   }
 }
 
+function ensureFullDisjoint(parsed, labelPrefix = '') {
+  const allMain = new Set([...parsed.group1, ...parsed.group2, ...parsed.group3, ...parsed.group4]);
+  const overlaps = parsed.full.filter((n) => allMain.has(n));
+  if (overlaps.length) {
+    throw new Error(`${labelPrefix}全車號碼不可與第一組到第四組重複：${overlaps.join('、')}`);
+  }
+}
+
 function buildValidationSummary(groups) {
   return {
     groupSizes: {
@@ -75,6 +83,7 @@ function validatePayload(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
   const groups = normalizeGroups(payload.groups || {});
   ensureMainGroupsUnique(groups);
+  ensureFullDisjoint(groups);
 
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
   return {
@@ -104,6 +113,7 @@ function validateManualPayload(payload) {
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
   const groups = normalizeGroups(payload.groups || {});
   ensureMainGroupsUnique(groups, '手動');
+  ensureFullDisjoint(groups, '手動');
 
   return {
     lotteryType,

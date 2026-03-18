@@ -388,6 +388,7 @@ function enrichAnalysisForTracking(tracking) {
     const groupPairExposure = sumAllPairExposure(g, analysis.pairWeightMap || analysis.pairCounts || {});
     const groupTripleExposure = sumAllTripleExposure(g, analysis.tripleWeightMap || analysis.tripleCounts || {});
     const identityHeatScore = exactNumberIdentityScore(g, counts);
+    const identityFingerprint = exactNumberFingerprint(g, counts);
     return {
       groupIndex: idx + 1,
       groupNumbers: g,
@@ -401,6 +402,7 @@ function enrichAnalysisForTracking(tracking) {
       groupPairExposure,
       groupTripleExposure,
       identityHeatScore,
+      identityFingerprint,
       frequencyScores: g.map(n => Number(counts[n] || 0))
     };
   });
@@ -457,6 +459,19 @@ function exactNumberIdentityScore(group, hotScoreMap) {
   }, 0);
 }
 
+function exactNumberFingerprint(group, hotScoreMap) {
+  const nums = (group || []).map((n) => String(n).padStart(2, '0')).sort();
+  return nums.reduce((sum, n, idx) => {
+    const base = Number(hotScoreMap[n] || 0);
+    const raw = Number(n);
+    return sum + raw * (idx + 3) + base * (idx + 5);
+  }, 0);
+}
+
+function normalizedGroupNumbers(groups) {
+  return (Array.isArray(groups) ? groups : []).map((n) => String(n).padStart(2, '0')).sort((a, b) => Number(a) - Number(b));
+}
+
 function describeHeatDensity(detail) {
   if (Number(detail.hotCount || 0) >= 3) return `第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`;
   if (Number(detail.hotCount || 0) === 2) return `第${detail.groupIndex}組含 2 顆熱號，仍在可控範圍`;
@@ -480,6 +495,7 @@ function getAnalysisProfile(tracking) {
   const pairExposure = details.map(d => Number(d.groupPairExposure || 0));
   const tripleExposure = details.map(d => Number(d.groupTripleExposure || 0));
   const identityHeatScores = details.map(d => Number(d.identityHeatScore || 0));
+  const identityFingerprints = details.map(d => Number(d.identityFingerprint || 0));
   const hotWeights = details.map(d => (Array.isArray(d.groupNumbers) ? d.groupNumbers : []).reduce((sum, n) => sum + Number(hotScoreMap[n] || 0), 0));
   const riskyWeights = details.map(d => (Array.isArray(d.groupNumbers) ? d.groupNumbers : []).reduce((sum, n) => sum + (riskySet.has(n) ? Number(hotScoreMap[n] || 1) : 0), 0));
   const heatScores = details.map(d => Number(d.groupHeatScore || 0));
@@ -493,6 +509,7 @@ function getAnalysisProfile(tracking) {
   const totalPairExposure = pairExposure.reduce((a,b)=>a+b,0);
   const totalTripleExposure = tripleExposure.reduce((a,b)=>a+b,0);
   const totalIdentityHeatScore = identityHeatScores.reduce((a,b)=>a+b,0);
+  const totalIdentityFingerprint = identityFingerprints.reduce((a,b)=>a+b,0);
   const totalHotWeight = hotWeights.reduce((a,b)=>a+b,0);
   const totalRiskyWeight = riskyWeights.reduce((a,b)=>a+b,0);
   const hotSpreadPenalty = hotCounts.length ? Math.max(...hotCounts) - Math.min(...hotCounts) : 0;
@@ -514,6 +531,7 @@ function getAnalysisProfile(tracking) {
     pairExposure,
     tripleExposure,
     identityHeatScores,
+    identityFingerprints,
     hotWeights,
     riskyWeights,
     heatScores,
@@ -527,6 +545,7 @@ function getAnalysisProfile(tracking) {
     totalPairExposure,
     totalTripleExposure,
     totalIdentityHeatScore,
+    totalIdentityFingerprint,
     totalHotWeight,
     totalRiskyWeight,
     hotSpreadPenalty,
@@ -551,31 +570,44 @@ function formatRiskDetailGroup(detail) {
   return parts;
 }
 
+
 function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
   const useProfile = profile || getAnalysisProfile(tracking);
-  const { analysis, details, totalPairHits, totalTripleHits, totalRiskyNumbers, hotCounts, totalHeatScore, totalPairWeight, totalTripleWeight, pairExposure, tripleExposure, identityHeatScores } = useProfile;
+  const { analysis, details, totalPairHits, totalTripleHits, hotCounts, pairExposure, tripleExposure, identityHeatScores } = useProfile;
   const positives = [];
   const negatives = [];
   if (Number(analysis.drawCount || 0) > 0) positives.push(`已依近${analysis.evaluatedWindow || 50}期資料檢查主四組碰撞風險`);
+
+  const safest = details.slice().sort((a, b) => {
+    const aRisk = Number(a.groupPairExposure || 0) + Number(a.groupTripleExposure || 0) * 2 + (Array.isArray(a.riskyNumbers) ? a.riskyNumbers.length : 0);
+    const bRisk = Number(b.groupPairExposure || 0) + Number(b.groupTripleExposure || 0) * 2 + (Array.isArray(b.riskyNumbers) ? b.riskyNumbers.length : 0);
+    if (aRisk !== bRisk) return aRisk - bRisk;
+    return Number(a.identityHeatScore || 0) - Number(b.identityHeatScore || 0);
+  });
   if (totalTripleHits === 0) positives.push('主四組未落入高風險三連號同組');
   if (totalPairHits === 0) positives.push('主四組未命中高風險雙號同組');
-  else if (totalPairWeight <= 6) positives.push('主四組高風險雙號控制在低水位');
   if (hotCounts.length && Math.max(...hotCounts) <= 2) positives.push('熱號已拆分配置於不同分組');
-  const lowestExposureIndex = pairExposure.length ? pairExposure.indexOf(Math.min(...pairExposure)) + 1 : 0;
-  if (lowestExposureIndex) positives.push(`第${lowestExposureIndex}組碰撞暴露最低`);
+  if (safest[0]) positives.push(`第${safest[0].groupIndex}組碰撞密度最低`);
   if (features.fullCoverage === 19) positives.push('全車19顆完整承接補位號碼');
 
-  const detailedNegatives = details.flatMap(formatRiskDetailGroup);
-  negatives.push(...detailedNegatives);
+  details.forEach((detail) => {
+    const tripleHits = Array.isArray(detail.riskyTripleHits) ? detail.riskyTripleHits : [];
+    const pairHits = Array.isArray(detail.riskyPairHits) ? detail.riskyPairHits : [];
+    const riskyNums = Array.isArray(detail.riskyNumbers) ? detail.riskyNumbers : [];
+    if (tripleHits.length) negatives.push(`第${detail.groupIndex}組含高風險三連號 ${String(tripleHits[0]).split('-').join('、')}`);
+    else if (pairHits.length) negatives.push(`第${detail.groupIndex}組含高風險雙號 ${String(pairHits[0]).split('-').join('、')}`);
+    else if (riskyNums.length >= 2) negatives.push(`第${detail.groupIndex}組高風險號偏多（${riskyNums.slice(0, 3).join('、')}）`);
+    else if (Number(detail.hotCount || 0) >= 3) negatives.push(`第${detail.groupIndex}組熱號集中 ${detail.hotCount} 顆`);
+  });
 
   if (!negatives.length) {
-    const maxPairExposure = pairExposure.length ? Math.max(...pairExposure) : 0;
-    const pairExposureIndex = pairExposure.length ? pairExposure.indexOf(maxPairExposure) + 1 : 0;
-    const maxHeatIndex = identityHeatScores.length ? identityHeatScores.indexOf(Math.max(...identityHeatScores)) + 1 : 0;
-    if (maxPairExposure > 0 && pairExposureIndex) negatives.push(`第${pairExposureIndex}組碰撞暴露值較高（${maxPairExposure}）`);
-    else if (totalTripleWeight > 0) negatives.push('主四組已出現三連碰撞權重，需留意單組集中');
-    else if (totalPairWeight > 0) negatives.push('主四組存在少量雙號碰撞，但仍維持可控');
-    else if (maxHeatIndex) negatives.push(`第${maxHeatIndex}組熱度相對較高，建議持續留意`);
+    const riskiest = details.slice().sort((a, b) => {
+      const aRisk = Number(a.groupPairExposure || 0) + Number(a.groupTripleExposure || 0) * 2 + (Array.isArray(a.riskyNumbers) ? a.riskyNumbers.length : 0) + Number(a.hotCount || 0) * 0.5;
+      const bRisk = Number(b.groupPairExposure || 0) + Number(b.groupTripleExposure || 0) * 2 + (Array.isArray(b.riskyNumbers) ? b.riskyNumbers.length : 0) + Number(b.hotCount || 0) * 0.5;
+      if (aRisk !== bRisk) return bRisk - aRisk;
+      return Number(b.identityHeatScore || 0) - Number(a.identityHeatScore || 0);
+    });
+    if (riskiest[0]) negatives.push(`第${riskiest[0].groupIndex}組需優先留意，組內熱度與碰撞暴露相對較高`);
     else negatives.push('主四組僅有輕微風險暴露，暫不影響整體判讀');
   }
   return { positives: dedupeLabels(positives), negatives: dedupeLabels(negatives) };
@@ -598,6 +630,7 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
     pairExposure,
     tripleExposure,
     identityHeatScores,
+    identityFingerprints,
     hotWeights,
     riskyWeights,
     heatScores,
@@ -610,6 +643,7 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
     totalPairExposure,
     totalTripleExposure,
     totalIdentityHeatScore,
+    totalIdentityFingerprint,
     totalHotWeight,
     totalRiskyWeight,
     hotSpreadPenalty,
@@ -622,56 +656,58 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
   } = profile;
 
   const basePass = total ? (bucket.labels['恭喜過關'] || 0) / total : 0.55;
-  const structuralRisk = details.reduce((sum, d, idx) => {
-    const hotPenalty = Math.max(0, hotCounts[idx] - 2) * 4;
-    const pairPenalty = Number(pairWeights[idx] || 0) * 6 + Number(riskyPairCounts[idx] || 0) * 3;
-    const triplePenalty = Number(tripleWeights[idx] || 0) * 11 + Number(riskyTripleCounts[idx] || 0) * 8;
-    const riskyPenalty = Number(riskyWeights[idx] || 0) * 0.8 + Number(riskyNumberCounts[idx] || 0) * 2.5;
-    const exposurePenalty = Number(pairExposure[idx] || 0) * 1.8 + Number(tripleExposure[idx] || 0) * 2.4;
-    const identityPenalty = Number(identityHeatScores[idx] || 0) * 0.22;
-    const heatPenalty = Math.max(0, Number(heatScores[idx] || 0) - 24) * 0.95;
-    return sum + hotPenalty + pairPenalty + triplePenalty + riskyPenalty + exposurePenalty + identityPenalty + heatPenalty;
-  }, 0);
-
-  const fingerprintDrift = (totalIdentityHeatScore % 17) + ((totalPairExposure + totalTripleExposure) % 11);
+  const groupIdentityRisk = details.map((d, idx) => {
+    const hotPenalty = Math.max(0, hotCounts[idx] - 2) * 4.5;
+    const pairPenalty = Number(pairWeights[idx] || 0) * 6.5 + Number(riskyPairCounts[idx] || 0) * 4.2;
+    const triplePenalty = Number(tripleWeights[idx] || 0) * 12 + Number(riskyTripleCounts[idx] || 0) * 9.5;
+    const riskyPenalty = Number(riskyWeights[idx] || 0) * 1.0 + Number(riskyNumberCounts[idx] || 0) * 3.2;
+    const exposurePenalty = Number(pairExposure[idx] || 0) * 2.1 + Number(tripleExposure[idx] || 0) * 2.9;
+    const identityPenalty = Number(identityHeatScores[idx] || 0) * 0.28;
+    const fingerprintPenalty = (Number(identityFingerprints[idx] || 0) % 97) * 0.06;
+    const heatPenalty = Math.max(0, Number(heatScores[idx] || 0) - 18) * 1.15;
+    return hotPenalty + pairPenalty + triplePenalty + riskyPenalty + exposurePenalty + identityPenalty + fingerprintPenalty + heatPenalty;
+  });
+  const structuralRisk = groupIdentityRisk.reduce((a, b) => a + b, 0);
+  const fingerprintDrift = ((totalIdentityFingerprint % 131) * 0.11) + ((totalHotWeight % 17) * 0.3) + ((totalRiskyWeight % 13) * 0.4);
 
   let tendency = basePass * 100;
-  tendency += 14;
-  tendency -= structuralRisk * 0.24;
-  tendency -= Math.max(0, hotSpreadPenalty - 1) * 2.1;
-  tendency -= Math.max(0, heatSpreadPenalty - 4) * 0.45;
-  tendency -= Math.max(0, anyGroupHotOver - 2) * 3.2;
-  tendency -= Math.max(0, anyGroupRiskyOver - 1) * 4.1;
-  tendency -= maxPairHits * 2.1;
-  tendency -= maxTripleHits * 4.2;
-  tendency -= fingerprintDrift * 0.35;
-  tendency = Math.max(26, Math.min(91, tendency));
+  tendency += 15;
+  tendency -= structuralRisk * 0.19;
+  tendency -= Math.max(0, hotSpreadPenalty - 1) * 2.5;
+  tendency -= Math.max(0, heatSpreadPenalty - 3) * 0.7;
+  tendency -= Math.max(0, anyGroupHotOver - 2) * 4.0;
+  tendency -= Math.max(0, anyGroupRiskyOver - 1) * 5.0;
+  tendency -= maxPairHits * 3.0;
+  tendency -= maxTripleHits * 5.0;
+  tendency -= fingerprintDrift;
+  tendency = Math.max(18, Math.min(93, tendency));
 
-  let severeRisk = 6;
-  severeRisk += totalPairWeight * 1.5;
-  severeRisk += totalTripleWeight * 3.4;
-  severeRisk += totalPairExposure * 0.45;
-  severeRisk += totalTripleExposure * 0.7;
-  severeRisk += Math.max(0, totalRiskyNumbers - 2) * 1.3;
-  severeRisk += denseRiskGroups * 1.7;
-  severeRisk += Math.max(0, heatSpreadPenalty - 6) * 0.3;
-  severeRisk = Math.max(4, Math.min(64, severeRisk));
+  let severeRisk = 4;
+  severeRisk += totalPairWeight * 1.8;
+  severeRisk += totalTripleWeight * 3.7;
+  severeRisk += totalPairExposure * 0.55;
+  severeRisk += totalTripleExposure * 0.85;
+  severeRisk += Math.max(0, totalRiskyNumbers - 1) * 1.6;
+  severeRisk += denseRiskGroups * 2.1;
+  severeRisk += Math.max(0, anyGroupHotOver - 2) * 2.2;
+  severeRisk += (totalIdentityFingerprint % 89) * 0.07;
+  severeRisk = Math.max(3, Math.min(72, severeRisk));
 
   let retryRate = 100 - tendency - severeRisk;
-  retryRate = Math.max(5, Math.min(55, retryRate));
+  retryRate = Math.max(4, Math.min(58, retryRate));
 
-  let reliability = 46 + Math.min(total, 50) * 0.12 + Math.min(Number(analysis.drawCount || 0), 50) * 0.15;
-  reliability -= severeRisk * 0.11;
-  reliability += Math.max(0, 4 - denseRiskGroups) * 1.1;
-  reliability += Math.max(0, 10 - hotSpreadPenalty) * 0.35;
-  reliability -= fingerprintDrift * 0.08;
-  reliability = Math.max(32, Math.min(88, reliability));
+  let reliability = 42 + Math.min(total, 50) * 0.12 + Math.min(Number(analysis.drawCount || 0), 50) * 0.18;
+  reliability -= severeRisk * 0.09;
+  reliability += Math.max(0, 4 - denseRiskGroups) * 1.0;
+  reliability += Math.max(0, 10 - hotSpreadPenalty) * 0.25;
+  reliability += ((totalIdentityFingerprint % 29) * 0.09);
+  reliability = Math.max(28, Math.min(89, reliability));
 
   let riskLevel = '低';
   if (totalTripleWeight >= 4 || totalPairWeight >= 12 || totalTripleExposure >= 8 || totalPairExposure >= 18 || anyGroupRiskyOver >= 3 || maxTripleHits >= 1) riskLevel = '高';
   else if (totalTripleWeight >= 2 || totalPairWeight >= 5 || totalTripleExposure >= 3 || totalPairExposure >= 8 || anyGroupHotOver >= 3 || anyGroupRiskyOver >= 2 || maxPairHits >= 2) riskLevel = '中';
 
-  const score = Math.round(tendency - severeRisk * 0.38 + reliability * 0.22);
+  const score = Math.round(tendency - severeRisk * 0.32 + reliability * 0.24);
   const narrative = buildRiskNarrativeFromAnalysis(features, tracking, profile);
 
   return {
@@ -695,6 +731,7 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
       totalPairExposure,
       totalTripleExposure,
       totalIdentityHeatScore,
+      totalIdentityFingerprint,
       totalHotWeight,
       totalRiskyWeight,
       totalHeatScore,
@@ -703,7 +740,8 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
       heatScores,
       pairExposure,
       tripleExposure,
-      identityHeatScores
+      identityHeatScores,
+      identityFingerprints
     }
   };
 }

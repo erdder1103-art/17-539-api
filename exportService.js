@@ -40,6 +40,13 @@ function normalizeTrackingMap(raw) {
   return base;
 }
 
+
+function sortNumberArray(arr) {
+  return (Array.isArray(arr) ? arr : [])
+    .map((n) => String(n).padStart(2, '0'))
+    .sort((a, b) => Number(a) - Number(b));
+}
+
 function toLine(groups) {
   return [groups?.group1, groups?.group2, groups?.group3, groups?.group4, groups?.full]
     .filter((x) => Array.isArray(x) && x.length)
@@ -84,7 +91,7 @@ function buildTrackingHistoryRows(history) {
     結算時間: row.settledAt || '',
     結果標記: row.settlement?.finalLabel || '',
     對獎時間: row.settlement?.checkedAt || '',
-    開獎號碼: Array.isArray(row.settlement?.draw) ? row.settlement.draw.join('、') : '',
+    開獎號碼: sortNumberArray(row.settlement?.draw).join('、'),
     分組內容: toLine(row.groups || {})
   }));
 }
@@ -96,7 +103,7 @@ function buildResultRows(history) {
     來源: row.sourceName || '',
     期別鍵值: row.issueKey || '',
     對獎時間: row.checkedAt || '',
-    開獎號碼: Array.isArray(row.draw) ? row.draw.join('、') : '',
+    開獎號碼: sortNumberArray(row.draw).join('、'),
     第一組命中: row.resultMap?.group1 ?? '',
     第二組命中: row.resultMap?.group2 ?? '',
     第三組命中: row.resultMap?.group3 ?? '',

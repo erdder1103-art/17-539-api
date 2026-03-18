@@ -2303,6 +2303,180 @@ function cleanupNumbers(arr, maxNum){
   }
 
 
+  const manualPickerState = {
+    id: '',
+    targetKey: '',
+    maxCount: 0,
+    mainKeys: ['manualGroup1','manualGroup2','manualGroup3','manualGroup4']
+  };
+
+  function ensureManualPickerModal(){
+    if ($('manualPickerModal')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'manualPickerModal';
+    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px;';
+    wrap.innerHTML = `
+      <div style="width:min(820px,96vw);max-height:90vh;overflow:auto;background:#4d0808;border:1px solid rgba(255,210,140,.35);border-radius:18px;padding:18px;color:#ffe2b6;box-shadow:0 20px 50px rgba(0,0,0,.4);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+          <div>
+            <div id="manualPickerTitle" style="font-size:22px;font-weight:900;">選擇號碼</div>
+            <div id="manualPickerSub" class="small muted" style="margin-top:4px;">點選 1-39 號碼，會自動排序帶入</div>
+          </div>
+          <button id="manualPickerClose" class="secondary">關閉</button>
+        </div>
+        <div id="manualPickerSummary" style="margin-top:10px;font-size:14px;"></div>
+        <div id="manualPickerGrid" style="margin-top:14px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap;">
+          <div id="manualPickerSelected" style="font-size:14px;line-height:1.8;"></div>
+          <div class="btns"><button id="manualPickerClear" class="secondary">清空本欄</button><button id="manualPickerApply" class="green">帶入這一組</button></div>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    $('manualPickerClose').addEventListener('click', closeManualPicker);
+    $('manualPickerApply').addEventListener('click', applyManualPicker);
+    $('manualPickerClear').addEventListener('click', ()=>{
+      const input = $(`${manualPickerState.id}_${manualPickerState.targetKey}`);
+      if (input) input.value = '';
+      renderManualPicker();
+    });
+    wrap.addEventListener('click', (e)=>{ if (e.target === wrap) closeManualPicker(); });
+  }
+
+  function getManualFieldKeys(){
+    return ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'];
+  }
+
+  function getManualSelectedMap(id){
+    const map = {};
+    getManualFieldKeys().forEach((key)=>{
+      map[key] = parseManualGroupInput(($(`${id}_${key}`)?.value || ''), 39);
+    });
+    return map;
+  }
+
+  function getReservedNumbers(id, targetKey){
+    const selected = getManualSelectedMap(id);
+    const reserved = new Set();
+    const mainKeys = manualPickerState.mainKeys;
+    if (targetKey === 'manualFull') {
+      mainKeys.forEach((key)=> selected[key].forEach((n)=> reserved.add(n)));
+      return reserved;
+    }
+    mainKeys.forEach((key)=>{
+      if (key === targetKey) return;
+      selected[key].forEach((n)=> reserved.add(n));
+    });
+    (selected.manualFull || []).forEach((n)=> reserved.add(n));
+    return reserved;
+  }
+
+  function openManualPicker(id, targetKey, maxCount){
+    manualPickerState.id = id;
+    manualPickerState.targetKey = targetKey;
+    manualPickerState.maxCount = maxCount;
+    ensureManualPickerModal();
+    $('manualPickerModal').style.display = 'flex';
+    const labelMap = {
+      manualGroup1: '第一組', manualGroup2: '第二組', manualGroup3: '第三組', manualGroup4: '第四組', manualFull: '全車號碼'
+    };
+    $('manualPickerTitle').textContent = `選擇${labelMap[targetKey] || '號碼'}`;
+    $('manualPickerSub').textContent = `可選 ${maxCount} 顆；主四組與全車不可重複，系統會自動排序。`;
+    renderManualPicker();
+  }
+
+  function closeManualPicker(){
+    if ($('manualPickerModal')) $('manualPickerModal').style.display = 'none';
+  }
+
+  function renderManualPicker(){
+    const { id, targetKey, maxCount } = manualPickerState;
+    const input = $(`${id}_${targetKey}`);
+    if (!input) return;
+    const selected = parseManualGroupInput(input.value || '', 39);
+    const reserved = getReservedNumbers(id, targetKey);
+    $('manualPickerSummary').textContent = `已選 ${selected.length}/${maxCount} 顆`;
+    $('manualPickerSelected').textContent = selected.length ? `目前號碼：${selected.join('、')}` : '目前尚未選號';
+    const grid = $('manualPickerGrid');
+    grid.innerHTML = '';
+    for (let i=1;i<=39;i++) {
+      const n = String(i).padStart(2,'0');
+      const active = selected.includes(n);
+      const blocked = !active && reserved.has(n);
+      const full = !active && selected.length >= maxCount;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = n;
+      btn.style.cssText = `padding:10px 6px;border-radius:12px;border:1px solid rgba(255,210,140,.28);background:${active ? '#f7c873' : blocked ? 'rgba(255,255,255,.12)' : '#5d1111'};color:${active ? '#4c1200' : blocked ? 'rgba(255,255,255,.45)' : '#ffe2b6'};font-weight:800;cursor:${blocked ? 'not-allowed' : 'pointer'};opacity:${full && !active ? .45 : 1};`;
+      btn.disabled = blocked || full;
+      btn.addEventListener('click', ()=>{
+        let next = parseManualGroupInput(input.value || '', 39);
+        if (next.includes(n)) next = next.filter(x => x !== n);
+        else next.push(n);
+        next = [...new Set(next)].sort((a,b)=>Number(a)-Number(b)).slice(0, maxCount);
+        input.value = next.join(' ');
+        renderManualPicker();
+      });
+      grid.appendChild(btn);
+    }
+  }
+
+  function applyManualPicker(){
+    closeManualPicker();
+  }
+
+  function attachManualPicker(id){
+    ensureManualPickerModal();
+    const config = [
+      ['manualGroup1',5],['manualGroup2',5],['manualGroup3',5],['manualGroup4',5],['manualFull',19]
+    ];
+    config.forEach(([key, maxCount])=>{
+      const input = $(`${id}_${key}`);
+      if (!input || input.dataset.pickerBound === '1') return;
+      input.readOnly = true;
+      input.dataset.pickerBound = '1';
+      input.style.cursor = 'pointer';
+      input.addEventListener('click', ()=>openManualPicker(id, key, maxCount));
+      input.addEventListener('focus', ()=>openManualPicker(id, key, maxCount));
+    });
+  }
+
+  function fillManualRandomGroups(id){
+    const s = state.lotteries[id];
+    const analysis = s.historyAnalysis || analyzeHistoryText(id, getEls(id).historyInput.value.trim());
+    if (analysis) {
+      s.historyAnalysis = analysis;
+      renderHistoryAnalysis(id, analysis);
+    }
+    const hot = (analysis?.hot || []).slice(0, 10);
+    const cold = (analysis?.cold || []).slice(0, 10);
+    const allNums = Array.from({length:s.cfg.maxNum}, (_,i)=>String(i+1).padStart(2,'0'));
+    const mid = allNums.filter((n)=>!hot.includes(n) && !cold.includes(n));
+    const pairCounts = analysis?.pairCounts || {};
+    const tripleCounts = analysis?.tripleCounts || {};
+    const highRiskPairs = new Set((analysis?.topPairs || []).filter(([key,count])=>Number(count||0)>=2).map(([key])=>key));
+    const highRiskTriples = new Set((analysis?.topTriples || []).filter(([key,count])=>Number(count||0)>=2).map(([key])=>key));
+    const used = new Set();
+    const makePools = () => [shuffle(hot), shuffle(mid).slice(0, 15), shuffle(mid).slice(15), shuffle(cold), shuffle(cold)];
+    const groups = {
+      group1: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum),
+      group2: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum),
+      group3: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum),
+      group4: makeGroupFromPools(5, makePools(), used, highRiskPairs, highRiskTriples, s.cfg.maxNum)
+    };
+    const riskyNumberSet = new Set();
+    highRiskPairs.forEach((key)=>key.split('-').forEach((n)=>riskyNumberSet.add(n)));
+    highRiskTriples.forEach((key)=>key.split('-').forEach((n)=>riskyNumberSet.add(n)));
+    const fullPool = [...shuffle(allNums.filter(n => !used.has(n) && riskyNumberSet.has(n))), ...shuffle(allNums.filter(n => !used.has(n) && !riskyNumberSet.has(n)))];
+    groups.full = fullPool.slice(0,19).sort((a,b)=>Number(a)-Number(b));
+    $(`${id}_manualGroup1`).value = groups.group1.join(' ');
+    $(`${id}_manualGroup2`).value = groups.group2.join(' ');
+    $(`${id}_manualGroup3`).value = groups.group3.join(' ');
+    $(`${id}_manualGroup4`).value = groups.group4.join(' ');
+    $(`${id}_manualFull`).value = groups.full.join(' ');
+    showMiniNotice(`${state.lotteries[id].cfg.title}：已一鍵填入手動追蹤號碼`, 'ok');
+  }
+
+
 
 function pickRandom(list, used){
   const arr = list.filter(n => !used.has(n));
@@ -2486,6 +2660,8 @@ function bindEvents(id){
     $(`${id}_btnConfirmTracking`).addEventListener("click", ()=>confirmTracking(id));
     setConfirmAvailability(id, false, '請先執行自動生成');
     $(`${id}_btnManualTracking`).addEventListener("click", ()=>submitManualTracking(id));
+    if ($(`${id}_btnManualRandomFill`)) $(`${id}_btnManualRandomFill`).addEventListener("click", ()=>fillManualRandomGroups(id));
+    if ($(`${id}_btnManualClear`)) $(`${id}_btnManualClear`).addEventListener("click", ()=>{ ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key=>{ if($(`${id}_${key}`)) $(`${id}_${key}`).value=''; }); });
     $(`${id}_btnRefreshTracking`).addEventListener("click", ()=>refreshTrackingBoard(id));
     $(`${id}_btnTelegramTest`).addEventListener("click", ()=>testTelegram(id));
     $(`${id}_btnSaveTelegramConfig`).addEventListener("click", ()=>saveTelegramConfig(id));
@@ -2571,6 +2747,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
 
   async function initLottery(id, restored){
     bindEvents(id);
+    attachManualPicker(id);
 
     if(restored){
       renderRestoredState(id);
