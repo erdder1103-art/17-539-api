@@ -1,8 +1,8 @@
-const { callTelegram, getBotRuntimeSummary, sendTelegramMessage } = require('./telegram');
+const { getBotRuntimeSummary, sendTelegramMessage } = require('./telegram');
 const { getDataFile, readJsonSafe, writeJsonAtomic, initializeDataFiles } = require('./dataPaths');
 const { formatTaipeiDateTime, getTaipeiDate } = require('./utils/time');
 const { getActiveTrackings } = require('./trackingStore');
-const { getRecommendations, getLearningState, getResultHistory, getRangeSummary, compareActiveTrackings } = require('./resultService');
+const { getLearningState, getResultHistory, getRangeSummary, compareActiveTrackings, getRecommendations } = require('./resultService');
 
 const BOT_RUNTIME_FILE = getDataFile('bot_runtime.json');
 
@@ -48,8 +48,12 @@ function truncate(text, max = 120) {
 
 function detectLotteryType(text) {
   const t = String(text || '').toLowerCase();
-  if (t.includes('天天樂') || t.includes('ttl')) return 'ttl';
-  return '539';
+  const hasTtl = t.includes('天天樂') || t.includes('ttl');
+  const has539 = t.includes('539');
+  if (hasTtl && has539) return 'all';
+  if (hasTtl) return 'ttl';
+  if (has539) return '539';
+  return 'all';
 }
 
 function detectRangeQuery(text) {
@@ -78,7 +82,8 @@ function formatLabels(summary) {
   ];
 }
 
-function buildRecommendationReply(type, compareMode = false) {
+function buildRecommendationReply(type) {
+  if (type === 'all') return [buildRecommendationReply('ttl'), '', buildRecommendationReply('539')].join('\n');
   const title = type === 'ttl' ? '天天樂' : '539';
   const compare = compareActiveTrackings(type);
   if (!compare.recommendations.length) {
@@ -101,6 +106,7 @@ function buildRecommendationReply(type, compareMode = false) {
 }
 
 function buildTrackingReply(type) {
+  if (type === 'all') return [buildTrackingReply('ttl'), '', buildTrackingReply('539')].join('\n');
   const title = type === 'ttl' ? '天天樂' : '539';
   const active = getActiveTrackings(type);
   if (!active.length) return `【${title} 追蹤清單】\n\n目前沒有待開獎追蹤。`;
@@ -117,6 +123,7 @@ function buildTrackingReply(type) {
 }
 
 function buildLearningReply(type) {
+  if (type === 'all') return [buildLearningReply('ttl'), '', buildLearningReply('539')].join('\n');
   const title = type === 'ttl' ? '天天樂' : '539';
   const learning = getLearningState(type);
   const system = learning.system || {};
@@ -130,6 +137,7 @@ function buildLearningReply(type) {
 }
 
 function buildHistoryReply(type) {
+  if (type === 'all') return [buildHistoryReply('ttl'), '', buildHistoryReply('539')].join('\n');
   const title = type === 'ttl' ? '天天樂' : '539';
   const rows = getResultHistory(type).slice(-6).reverse();
   if (!rows.length) return `【${title} 最近結果】\n\n目前還沒有歷史結果。`;
@@ -199,7 +207,8 @@ function buildHelpReply() {
     '6. 最近結果',
     '7. 這週結果 / 上週結果 / 上上週結果',
     '8. 3/10到3/20結果',
-    '9. 同步正常嗎'
+    '9. 同步正常嗎',
+    '10. 未指定彩種時，會同時回覆 天天樂 + 539'
   ].join('\n');
 }
 
@@ -224,7 +233,7 @@ function createReplyForText(text) {
   if (raw.includes('最近結果')) return buildHistoryReply(type);
   const rangeQuery = detectRangeQuery(raw);
   if (rangeQuery && (raw.includes('結果') || raw.includes('統計') || raw.includes('表現'))) return buildRangeReply(rangeQuery);
-  if (raw.includes('哪組會過') || raw.includes('哪組比較穩') || raw.includes('會不會過') || raw.includes('穩不穩') || raw.includes('分析')) return buildRecommendationReply(type, true);
+  if (raw.includes('哪組會過') || raw.includes('哪組比較穩') || raw.includes('會不會過') || raw.includes('穩不穩') || raw.includes('分析')) return buildRecommendationReply(type);
   return null;
 }
 
@@ -258,35 +267,27 @@ async function pollOnce() {
   let runtime = readRuntime();
   try {
     runtime = writeRuntime({ polling: true, lastPollAt: formatTaipeiDateTime() });
-    const data = await callTelegram('getUpdates', {
+    const result = await deps.callTelegram('getUpdates', {
       offset: Number(runtime.offset || 0),
-      timeout: 20,
+      timeout: 10,
       allowed_updates: ['message', 'edited_message']
-    }, { timeoutMs: 25000 });
-    const updates = Array.isArray(data.result) ? data.result : [];
-    let ignoredCount = 0;
-    let offset = Number(runtime.offset || 0);
+    }, { timeoutMs: 15000 });
+    const updates = Array.isArray(result?.result) ? result.result : [];
+    writeRuntime({ totalUpdates: Number(runtime.totalUpdates || 0) + updates.length });
     for (const update of updates) {
-      offset = Math.max(offset, Number(update.update_id || 0) + 1);
-      const handled = await handleUpdate(update).catch((err) => {
-        ignoredCount += 1;
-        writeRuntime({ errorCount: readRuntime().errorCount + 1, lastError: truncate(err.message, 200) });
-        return false;
-      });
-      if (!handled) ignoredCount += 1;
-      writeRuntime({ lastUpdateId: Number(update.update_id || 0) });
+      const nextOffset = Number(update.update_id || 0) + 1;
+      writeRuntime({ offset: nextOffset, lastUpdateId: Number(update.update_id || 0) });
+      try {
+        const handled = await handleUpdate(update);
+        if (!handled) writeRuntime({ ignoredMessages: readRuntime().ignoredMessages + 1 });
+      } catch (err) {
+        writeRuntime({ errorCount: readRuntime().errorCount + 1, lastError: truncate(err.message || String(err), 200) });
+      }
     }
-    writeRuntime({
-      polling: false,
-      offset,
-      totalUpdates: Number(runtime.totalUpdates || 0) + updates.length,
-      handledMessages: Number(readRuntime().handledMessages || 0),
-      ignoredMessages: Number(runtime.ignoredMessages || 0) + ignoredCount,
-      lastError: ''
-    });
   } catch (err) {
-    writeRuntime({ polling: false, errorCount: Number(runtime.errorCount || 0) + 1, lastError: truncate(err.message, 200) });
+    writeRuntime({ errorCount: readRuntime().errorCount + 1, lastError: truncate(err.message || String(err), 200) });
   } finally {
+    writeRuntime({ polling: false });
     isPolling = false;
   }
 }
@@ -301,19 +302,19 @@ function scheduleNext(ms = 1500) {
 
 function startBotInteraction(options = {}) {
   deps = options;
-  writeRuntime({ enabled: true, polling: false, lastError: '' });
-  scheduleNext(1000);
-  return getBotInteractionState();
+  if (pollTimer) clearTimeout(pollTimer);
+  writeRuntime({ enabled: true, lastError: '' });
+  scheduleNext(300);
 }
 
 function stopBotInteraction() {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = null;
-  writeRuntime({ polling: false, enabled: false });
+  writeRuntime({ enabled: false, polling: false });
 }
 
 function getBotInteractionState() {
-  return { runtime: readRuntime(), telegram: getBotRuntimeSummary() };
+  return { ...readRuntime(), telegram: getBotRuntimeSummary() };
 }
 
-module.exports = { BOT_RUNTIME_FILE, startBotInteraction, stopBotInteraction, getBotInteractionState };
+module.exports = { startBotInteraction, stopBotInteraction, getBotInteractionState };
