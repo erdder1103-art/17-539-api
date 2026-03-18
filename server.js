@@ -10,7 +10,7 @@ const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
-const { getBotRuntimeSummary, testTelegramSend } = require('./telegram');
+const { getBotRuntimeSummary, testTelegramSend, callTelegram } = require('./telegram');
 const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
 const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug } = require('./dataPaths');
@@ -342,7 +342,7 @@ app.listen(PORT, async () => {
     console.error('initial updateAll failed:', err.message);
   }
   try {
-    startBotInteraction({ getHealth: getHealthSnapshot });
+    startBotInteraction({ getHealth: getHealthSnapshot, callTelegram });
     console.log('Telegram group interaction polling started');
   } catch (err) {
     console.error('startBotInteraction failed:', err.message);

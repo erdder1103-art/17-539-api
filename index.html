@@ -663,7 +663,8 @@
     autoRefreshMs: 30 * 1000,
     analysisWindow: 100,
     fetchLimit: 100,
-    storageKey: "lottery_dual_machine_v31_dual_tracking",
+    storageKey: "lottery_dual_machine_v312_dual_tracking",
+    taskQueueKey: "lottery_dual_machine_v312_task_queue",
     urls: {
       ttl: [`${API_BASE}/api/ttl`, `${API_FALLBACK_BASE}/api/ttl`],
       l539: [`${API_BASE}/api/539`, `${API_FALLBACK_BASE}/api/539`]
@@ -691,6 +692,9 @@
     trackingSubmitLocks: {
       ttl: false,
       l539: false
+    },
+    taskCenter: {
+      queue: []
     }
   };
 
@@ -1495,6 +1499,32 @@ function cleanupNumbers(arr, maxNum){
     const el = getEls(id).autoState;
     el.textContent = `自動更新：${s.autoRefreshEnabled ? "開啟" : "關閉"}`;
     el.className = "statusTag " + (s.autoRefreshEnabled ? "ok" : "warn");
+  }
+
+  function apiPathCandidates(path){
+    return [`${API_BASE}${path}`, `${API_FALLBACK_BASE}${path}`];
+  }
+
+  async function postJsonApi(path, payload){
+    let lastErr = null;
+    for(const target of apiPathCandidates(path)){
+      try{
+        const res = await fetch(target, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload || {})
+        });
+        const text = await res.text();
+        let json = {};
+        try{ json = text ? JSON.parse(text) : {}; }catch(_){ json = { message: text || 'API 未回傳 JSON' }; }
+        if(!res.ok) throw new Error(json.message || `HTTP ${res.status}`);
+        json.__fetchedUrl = target;
+        return json;
+      }catch(err){
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error('API 寫入失敗');
   }
 
   async function fetchJson(url){
@@ -2575,29 +2605,8 @@ function formatEta(ms){
       }
     };
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-
     try{
-      const res = await fetch(`${API_BASE}/api/confirm-tracking`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-
-      let result = null;
-      try{
-        result = await res.json();
-      }catch(e){
-        result = null;
-      }
-
-      if(!res.ok || !result?.ok){
-        const msg = result?.message || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-
+      const result = await postJsonApi('/api/confirm-tracking', payload);
       if(result?.busy){
         showMiniNotice(`${s.cfg.title}：${result.message || "通報處理中，請勿重複點擊"}`, "warn");
       }else{
@@ -2605,10 +2614,8 @@ function formatEta(ms){
         refreshTrackingBoard(id, { silent: true });
       }
     }catch(err){
-      const msg = err?.name === "AbortError" ? "通報逾時，請稍後再試" : err.message;
-      showMiniNotice(`${s.cfg.title}：通報失敗：${msg}`, "warn");
+      showMiniNotice(`${s.cfg.title}：通報失敗：${err.message || '未知錯誤'}`, "warn");
     }finally{
-      clearTimeout(timer);
       state.trackingSubmitLocks[id] = false;
       if(btn){
         btn.disabled = false;
@@ -2630,7 +2637,7 @@ function formatEta(ms){
     const box = $(`${id}_telegramStatus`);
     if(!box) return;
     try{
-      const data = await fetchJson(`${API_BASE}/api/telegram/config`);
+      const data = await fetchJson(apiPathCandidates('/api/telegram/config'));
       const tg = data.telegram || {};
       box.innerHTML = `TG 設定：BOT_TOKEN=${tg.hasBotToken ? '已讀到' : '未讀到'}（${escapeHtml(tg.tokenSource || 'unknown')}），TG_CHAT_ID=${tg.hasChatId ? '已讀到' : '未讀到'}（${escapeHtml(tg.chatIdSource || 'unknown')}）${tg.chatIdPreview ? `，Chat預覽=${escapeHtml(tg.chatIdPreview)}` : ''}`;
     }catch(err){
@@ -2644,13 +2651,8 @@ function formatEta(ms){
     const chatId = ($(`${id}_chatIdInput`)?.value || '').trim();
     const title = state.lotteries[id].cfg.title;
     try{
-      const res = await fetch(`${API_BASE}/api/telegram/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ botToken: token, chatId })
-      });
-      const result = await res.json().catch(()=>null);
-      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      const result = await postJsonApi('/api/telegram/config', { botToken: token, chatId });
+      if(!result?.ok) throw new Error(result?.message || 'Telegram 設定儲存失敗');
       showMiniNotice(`${title}：Telegram 設定已儲存`, 'ok');
       await refreshTelegramStatus(id);
     }catch(err){
@@ -2661,13 +2663,8 @@ function formatEta(ms){
   async function testTelegram(id){
     const title = state.lotteries[id].cfg.title;
     try{
-      const res = await fetch(`${API_BASE}/api/telegram/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: `【${title}】Telegram 測試成功` })
-      });
-      const result = await res.json().catch(()=>null);
-      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      const result = await postJsonApi('/api/telegram/test', { text: `【${title}】Telegram 測試成功` });
+      if(!result?.ok) throw new Error(result?.message || 'Telegram 測試失敗');
       showMiniNotice(`${title}：Telegram 測試成功`, 'ok');
     }catch(err){
       showMiniNotice(`${title}：Telegram 測試失敗：${err.message || '未知錯誤'}`, 'warn');
@@ -2679,13 +2676,8 @@ function formatEta(ms){
   async function cancelTrackingItem(id, trackingId){
     const title = state.lotteries[id].cfg.title;
     try{
-      const res = await fetch(`${API_BASE}/api/tracking/cancel`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lotteryType: id === 'ttl' ? 'ttl' : '539', trackingId, reason: 'manual-ui-cancel' })
-      });
-      const result = await res.json().catch(()=>null);
-      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      const result = await postJsonApi('/api/tracking/cancel', { lotteryType: id === 'ttl' ? 'ttl' : '539', trackingId, reason: 'manual-ui-cancel' });
+      if(!result?.ok) throw new Error(result?.message || '取消追蹤失敗');
       showMiniNotice(`${title}：${result.message || '已取消追蹤'}`, 'ok');
       await refreshTrackingBoard(id, { silent: true });
     }catch(err){
@@ -2848,8 +2840,8 @@ function formatEta(ms){
     try{
       const type = id === "ttl" ? "ttl" : "539";
       const [data, recommendData] = await Promise.all([
-        fetchJson(`${API_BASE}/api/tracking/${type}`),
-        fetchJson(`${API_BASE}/api/recommend/${type}`).catch(()=>({ recommendations: [] }))
+        fetchJson(apiPathCandidates(`/api/tracking/${type}`)),
+        fetchJson(apiPathCandidates(`/api/recommend/${type}`)).catch(()=>({ recommendations: [] }))
       ]);
       const active = Array.isArray(data.active) ? data.active : [];
       const recommendMap = new Map((recommendData.recommendations || []).map((row)=>[row.trackingId, row]));
@@ -3504,6 +3496,255 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     startAutoTimer(id);
   }
 
+
+function saveTaskQueue(){
+  try{ localStorage.setItem(CONFIG.taskQueueKey, JSON.stringify(state.taskCenter.queue || [])); }catch(e){}
+}
+
+function loadTaskQueue(){
+  try{
+    const raw = localStorage.getItem(CONFIG.taskQueueKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.taskCenter.queue = Array.isArray(parsed) ? parsed : [];
+  }catch(e){
+    state.taskCenter.queue = [];
+  }
+}
+
+function getTaskModeLabel(mode){
+  return ({ smart_generate:'防2/3 自動生成', manual_submit:'手動追蹤送出', manual_fill:'一鍵填入手動欄', onekey_generate:'一鍵抽號到 logs', confirm_generated:'系統方案直接通報' })[mode] || mode;
+}
+
+function ensureTaskCenterUI(){
+  if($('taskCenterFab')) return;
+  const fab = document.createElement('button');
+  fab.id = 'taskCenterFab';
+  fab.className = 'green';
+  fab.type = 'button';
+  fab.textContent = 'v11.2 任務中心';
+  fab.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45)';
+  fab.addEventListener('click', openTaskCenter);
+  document.body.appendChild(fab);
+
+  const modal = document.createElement('div');
+  modal.id = 'taskCenterModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10030;backdrop-filter:blur(2px)';
+  modal.innerHTML = `
+    <div style="width:min(1080px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(30,5,5,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">v11.2 任務中心</div>
+          <div class="small" style="margin-top:4px;">用外掛選單方式先排任務，再決定立即執行或稍後執行。預定時間目前做排隊顯示，不會自動排程。</div>
+        </div>
+        <div class="btns" style="margin-top:0;">
+          <button type="button" class="secondary" id="taskCenterRefresh">刷新清單</button>
+          <button type="button" class="secondary" id="taskCenterClose">關閉</button>
+        </div>
+      </div>
+      <div class="analysisWrap" style="margin-top:14px;grid-template-columns:1.05fr .95fr;">
+        <div class="analysisPanel">
+          <div class="analysisTitle">建立新任務</div>
+          <div class="row">
+            <div><label class="small">彩種</label><select id="taskLottery"><option value="ttl">天天樂</option><option value="l539">539</option></select></div>
+            <div><label class="small">執行方式</label><select id="taskMode"><option value="smart_generate">防2/3 自動生成</option><option value="manual_submit">手動追蹤送出</option><option value="manual_fill">一鍵填入手動欄</option><option value="onekey_generate">一鍵抽號到 logs</option><option value="confirm_generated">系統方案直接通報</option></select></div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <div><label class="small">通報名稱</label><input id="taskSourceName" placeholder="手動追蹤 / 一鍵任務可先指定名稱"></div>
+            <div><label class="small">預定時間（排隊顯示）</label><input id="taskPlanTime" placeholder="例如：今晚 20:30 / 開獎前 10 分鐘"></div>
+          </div>
+          <div style="margin-top:10px;"><label class="small">備註</label><input id="taskRemark" placeholder="例如：先跑天天樂，再跑 539；或指定這次用途"></div>
+          <div class="btns">
+            <button type="button" class="green" id="taskCreateBtn">加入任務列表</button>
+            <button type="button" class="secondary" id="taskCreateAndRunBtn">建立後立即執行</button>
+          </div>
+          <div id="taskCenterHint" class="small" style="margin-top:10px;line-height:1.8;">提示：手動追蹤送出會直接讀取目前該彩種面板中的「第一組～第四組＋全車號碼」。</div>
+        </div>
+        <div class="analysisPanel">
+          <div class="analysisTitle">目前面板快捷動作</div>
+          <div class="btns" style="margin-top:0;">
+            <button type="button" class="secondary" id="taskJumpTTL">切到天天樂</button>
+            <button type="button" class="secondary" id="taskJump539">切到 539</button>
+            <button type="button" class="secondary" id="taskRefreshBothBoards">刷新雙彩種追蹤</button>
+          </div>
+          <div id="taskQuickStatus" class="small" style="margin-top:12px;line-height:1.8;"></div>
+        </div>
+      </div>
+      <div class="analysisPanel" style="margin-top:14px;">
+        <div class="analysisTitle">任務列表</div>
+        <div id="taskQueueBoard" class="small" style="line-height:1.8;">尚無任務</div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  $('taskCenterClose').addEventListener('click', closeTaskCenter);
+  $('taskCenterRefresh').addEventListener('click', renderTaskQueueBoard);
+  $('taskCreateBtn').addEventListener('click', ()=>createTaskFromCenter(false));
+  $('taskCreateAndRunBtn').addEventListener('click', ()=>createTaskFromCenter(true));
+  $('taskJumpTTL').addEventListener('click', ()=>jumpToLottery('ttl'));
+  $('taskJump539').addEventListener('click', ()=>jumpToLottery('l539'));
+  $('taskRefreshBothBoards').addEventListener('click', async ()=>{
+    await Promise.all([refreshTrackingBoard('ttl', { silent:true }), refreshTrackingBoard('l539', { silent:true })]);
+    renderTaskQuickStatus();
+    showMiniNotice('雙彩種追蹤清單已刷新', 'ok');
+  });
+  modal.addEventListener('click', (e)=>{ if(e.target === modal) closeTaskCenter(); });
+}
+
+function renderTaskQuickStatus(){
+  const el = $('taskQuickStatus');
+  if(!el) return;
+  const ttlPending = (state.taskCenter.queue || []).filter(x=>x.lotteryId==='ttl' && x.status==='pending').length;
+  const l539Pending = (state.taskCenter.queue || []).filter(x=>x.lotteryId==='l539' && x.status==='pending').length;
+  el.innerHTML = `天天樂待執行：<b>${ttlPending}</b>｜539待執行：<b>${l539Pending}</b><br>可先在各自面板準備手動號碼，再回這裡排任務與執行。`;
+}
+
+function openTaskCenter(){
+  ensureTaskCenterUI();
+  $('taskCenterModal').style.display = 'flex';
+  renderTaskQuickStatus();
+  renderTaskQueueBoard();
+}
+
+function closeTaskCenter(){
+  if($('taskCenterModal')) $('taskCenterModal').style.display = 'none';
+}
+
+function jumpToLottery(id){
+  const wrap = $(`${id}_wrap`);
+  if(wrap) wrap.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function buildTaskPayloadFromCenter(){
+  return {
+    id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    lotteryId: $('taskLottery')?.value || 'ttl',
+    mode: $('taskMode')?.value || 'smart_generate',
+    sourceName: ($('taskSourceName')?.value || '').trim(),
+    planTime: ($('taskPlanTime')?.value || '').trim(),
+    remark: ($('taskRemark')?.value || '').trim(),
+    status: 'pending',
+    createdAt: nowFull(),
+    executedAt: '',
+    lastMessage: ''
+  };
+}
+
+function createTaskFromCenter(runNow){
+  const task = buildTaskPayloadFromCenter();
+  state.taskCenter.queue.unshift(task);
+  saveTaskQueue();
+  renderTaskQueueBoard();
+  renderTaskQuickStatus();
+  showMiniNotice(`${state.lotteries[task.lotteryId].cfg.title}：任務已加入列表`, 'ok');
+  if(runNow){ executeTaskById(task.id); }
+}
+
+async function executeTask(task){
+  const id = task.lotteryId === 'ttl' ? 'ttl' : 'l539';
+  const title = state.lotteries[id].cfg.title;
+  if(task.sourceName && $(`${id}_manualSource`)){
+    $(`${id}_manualSource`).value = task.sourceName;
+  }
+  persistAll();
+  jumpToLottery(id);
+  if(task.mode === 'smart_generate'){
+    await $(`${id}_btnGenerateSmart`).click();
+    return `${title} 已執行防2/3 自動生成`;
+  }
+  if(task.mode === 'manual_fill'){
+    autoFillManualTracking(id);
+    return `${title} 已一鍵填入手動欄`;
+  }
+  if(task.mode === 'onekey_generate'){
+    autoGenerateToLog(id);
+    return `${title} 已一鍵抽號到 logs`;
+  }
+  if(task.mode === 'confirm_generated'){
+    if(!state.lotteries[id].generatedGroups){
+      throw new Error('尚未有可通報的系統方案，請先跑防2/3自動生成');
+    }
+    await confirmTracking(id);
+    return `${title} 已送出系統方案通報`;
+  }
+  if(task.mode === 'manual_submit'){
+    await submitManualTracking(id);
+    return `${title} 已送出手動追蹤`;
+  }
+  throw new Error('未知任務模式');
+}
+
+async function executeTaskById(taskId){
+  const task = (state.taskCenter.queue || []).find(x=>x.id === taskId);
+  if(!task) return;
+  task.status = 'running';
+  task.lastMessage = '執行中';
+  saveTaskQueue();
+  renderTaskQueueBoard();
+  try{
+    const msg = await executeTask(task);
+    task.status = 'done';
+    task.executedAt = nowFull();
+    task.lastMessage = msg;
+    showMiniNotice(msg, 'ok');
+  }catch(err){
+    task.status = 'error';
+    task.executedAt = nowFull();
+    task.lastMessage = err?.message || '執行失敗';
+    showMiniNotice(task.lastMessage, 'warn');
+  }
+  saveTaskQueue();
+  renderTaskQueueBoard();
+  renderTaskQuickStatus();
+}
+
+function removeTaskById(taskId){
+  state.taskCenter.queue = (state.taskCenter.queue || []).filter(x=>x.id !== taskId);
+  saveTaskQueue();
+  renderTaskQueueBoard();
+  renderTaskQuickStatus();
+}
+
+function rerunTaskById(taskId){
+  const old = (state.taskCenter.queue || []).find(x=>x.id === taskId);
+  if(!old) return;
+  const cloned = { ...old, id:`task_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, status:'pending', createdAt:nowFull(), executedAt:'', lastMessage:'' };
+  state.taskCenter.queue.unshift(cloned);
+  saveTaskQueue();
+  renderTaskQueueBoard();
+  renderTaskQuickStatus();
+}
+
+function renderTaskQueueBoard(){
+  const box = $('taskQueueBoard');
+  if(!box) return;
+  const queue = state.taskCenter.queue || [];
+  if(!queue.length){
+    box.innerHTML = '<span class="muted">尚無任務，建立後會顯示在這裡。</span>';
+    return;
+  }
+  box.innerHTML = queue.map((task, idx)=>{
+    const title = task.lotteryId === 'ttl' ? '天天樂' : '539';
+    const statusLabel = task.status === 'done' ? '已完成' : task.status === 'running' ? '執行中' : task.status === 'error' ? '失敗' : '待執行';
+    const statusColor = task.status === 'done' ? '#dfffbf' : task.status === 'running' ? '#cfeaff' : task.status === 'error' ? '#ffc4c4' : '#ffe7a8';
+    return `<div class="groupRow" style="margin-top:${idx? '10px':'0'};">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <b>${idx+1}. ${title}｜${escapeHtml(getTaskModeLabel(task.mode))}</b>
+          <div class="small" style="margin-top:6px;color:${statusColor};">狀態：${statusLabel}${task.planTime ? `｜預定：${escapeHtml(task.planTime)}` : ''}</div>
+          <div class="small">建立：${escapeHtml(task.createdAt || '')}${task.executedAt ? `｜執行：${escapeHtml(task.executedAt)}` : ''}</div>
+          <div class="small">通報名稱：${escapeHtml(task.sourceName || '未指定')}</div>
+          ${task.remark ? `<div class="small">備註：${escapeHtml(task.remark)}</div>` : ''}
+          ${task.lastMessage ? `<div class="small">結果：${escapeHtml(task.lastMessage)}</div>` : ''}
+        </div>
+        <div class="btns" style="margin-top:0;">
+          ${task.status !== 'running' ? `<button type="button" class="secondary" onclick="window.__taskRun('${task.id}')">執行</button>` : ''}
+          <button type="button" class="secondary" onclick="window.__taskClone('${task.id}')">複製</button>
+          <button type="button" class="danger" onclick="window.__taskRemove('${task.id}')">刪除</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
   async function init(){
     mountLotteries();
     setTaipeiClock();
@@ -3511,6 +3752,11 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     $("saveStateText").textContent = state.settings.autoSave ? "開啟" : "關閉";
 
     const restored = restoreState();
+    loadTaskQueue();
+    ensureTaskCenterUI();
+    window.__taskRun = (taskId) => executeTaskById(taskId);
+    window.__taskRemove = (taskId) => removeTaskById(taskId);
+    window.__taskClone = (taskId) => rerunTaskById(taskId);
 
     await initLottery("ttl", restored);
     await initLottery("l539", restored);
@@ -3524,6 +3770,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
 
   init();
 })();
+
 </script>
 </body>
 </html>
