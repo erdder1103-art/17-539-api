@@ -13,12 +13,11 @@ const { formatTaipeiDateTime } = require('./utils/time');
 const { getBotRuntimeSummary, testTelegramSend, callTelegram, broadcastTelegramMessage } = require('./telegram');
 const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
-const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug } = require('./dataPaths');
+const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug, getDataFile, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const storageInit = initializeDataFiles();
-restoreSeedTrackingIfNeeded();
 
 app.use(express.json({ limit: '35mb' }));
 app.use((req, res, next) => {
@@ -214,6 +213,41 @@ function withIssueContext(body = {}) {
   };
 }
 
+
+function ensureSeedTrackingRecord() {
+  try {
+    const trackingFile = getDataFile('tracking.json');
+    const trackingMap = readJsonSafe(trackingFile, { '539': { system: null, manuals: [] }, 'ttl': { system: null, manuals: [] } });
+    trackingMap.ttl = trackingMap.ttl || { system: null, manuals: [] };
+    if (trackingMap.ttl.system) return { restored: false, reason: 'ttl-system-exists' };
+    trackingMap.ttl.system = {
+      id: 'ttl_system_20260319212117_seed11821',
+      lotteryType: 'ttl',
+      lotteryTitle: '天天樂',
+      confirmedAt: '2026-03-19 21:21:17',
+      createdAt: '2026-03-19 21:21:17',
+      baseIssue: '11820',
+      startFromIssue: '11821',
+      status: 'pending',
+      trackType: 'system',
+      sourceName: '防2/3碰撞追蹤',
+      labels: { group1:'第一組', group2:'第二組', group3:'第三組', group4:'第四組', full:'全車號碼' },
+      groups: {
+        group1: ['04','06','08','20','31'],
+        group2: ['02','12','21','28','38'],
+        group3: ['05','14','17','30','36'],
+        group4: ['07','10','16','23','24'],
+        full: ['01','03','09','11','13','15','18','19','22','25','26','27','29','32','33','34','35','37','39']
+      },
+      analysis: null
+    };
+    writeJsonAtomic(trackingFile, trackingMap);
+    return { restored: true, trackingId: trackingMap.ttl.system.id };
+  } catch (err) {
+    return { restored: false, error: err.message };
+  }
+}
+
 function scheduleNextUpdate() {
   if (updateTimer) clearTimeout(updateTimer);
   updateTimer = setTimeout(async () => {
@@ -230,24 +264,6 @@ function scheduleNextUpdate() {
 app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, timezone: 'Asia/Taipei', count: cache539.length, draws: cache539 }));
 app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, timezone: 'Asia/Taipei', count: cacheTTL.length, draws: cacheTTL }));
 app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, timezone: 'Asia/Taipei', lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
-
-function restoreSeedTrackingIfNeeded() {
-  try {
-    const fs = require('fs');
-    const path = require('path');
-    const localSeed = path.join(__dirname, 'data', 'tracking.json');
-    const activeFile = getDataFile('tracking.json');
-    if (!fs.existsSync(localSeed)) return;
-    const seed = JSON.parse(fs.readFileSync(localSeed, 'utf8'));
-    const current = readJsonSafe(activeFile, { '539': { system: null, manuals: [] }, 'ttl': { system: null, manuals: [] } });
-    if (!current || !current.ttl || !current.ttl.system) {
-      writeJsonAtomic(activeFile, seed);
-    }
-  } catch (err) {
-    console.warn('restoreSeedTrackingIfNeeded failed:', err.message);
-  }
-}
-
 function getHealthSnapshot() {
   return {
     ok: true,
@@ -375,6 +391,7 @@ process.on('unhandledRejection', (err) => console.error('unhandledRejection:', e
 process.on('uncaughtException', (err) => console.error('uncaughtException:', err));
 
 app.listen(PORT, async () => {
+  const seedRestore = ensureSeedTrackingRecord();
   console.log(`API Server running http://localhost:${PORT}`);
   console.log('Storage data dir:', ACTIVE_DATA_DIR);
   console.log('Storage volume dir:', DEFAULT_VOLUME_DIR);

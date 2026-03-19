@@ -2533,79 +2533,6 @@ function autoGenerateToLog(id){
 }
 
 
-
-function simpleGroupStatus(detail){
-  const score = Number(detail?.score || 0);
-  if(score >= 12) return { label:'高風險', cls:'bad' };
-  if(score >= 7) return { label:'需留意', cls:'warn' };
-  return { label:'可用', cls:'good' };
-}
-
-function ensurePlanAnalysisModal(){
-  if($('planAnalysisModal')) return;
-  const wrap = document.createElement('div');
-  wrap.id = 'planAnalysisModal';
-  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10035;backdrop-filter:blur(2px)';
-  wrap.innerHTML = `
-    <div style="width:min(760px,96vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(36,6,6,.97));border:1px solid rgba(247,215,123,.24);border-radius:22px;padding:18px;color:#ffe7a8;box-shadow:0 20px 50px rgba(0,0,0,.45);">
-      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
-        <div>
-          <div style="font-size:24px;font-weight:900;">生成後分析預覽</div>
-          <div class="small" id="planAnalysisSub">先看整套四組是否乾淨，再決定要不要通報。</div>
-        </div>
-        <button type="button" class="secondary" id="planAnalysisClose">關閉</button>
-      </div>
-      <div id="planAnalysisBody" style="margin-top:14px;"></div>
-      <div class="btns" style="margin-top:14px;justify-content:flex-end;">
-        <button type="button" class="secondary" id="planAnalysisRegenerate">重新生成</button>
-        <button type="button" class="green" id="planAnalysisConfirm">確認通報</button>
-      </div>
-    </div>`;
-  document.body.appendChild(wrap);
-  wrap.addEventListener('click', (e)=>{ if(e.target===wrap) closePlanAnalysisModal(); });
-  $('planAnalysisClose')?.addEventListener('click', closePlanAnalysisModal);
-  $('planAnalysisRegenerate')?.addEventListener('click', async ()=>{
-    const id = state.planAnalysisContext?.lotteryId;
-    closePlanAnalysisModal();
-    if(id) await $(`${id}_btnGenerateSmart`)?.click();
-  });
-  $('planAnalysisConfirm')?.addEventListener('click', async ()=>{
-    const id = state.planAnalysisContext?.lotteryId;
-    closePlanAnalysisModal();
-    if(id) await confirmTracking(id);
-  });
-}
-
-function closePlanAnalysisModal(){
-  if($('planAnalysisModal')) $('planAnalysisModal').style.display = 'none';
-}
-
-function openPlanAnalysisModal(id, plan){
-  ensurePlanAnalysisModal();
-  state.planAnalysisContext = { lotteryId:id };
-  const details = Array.isArray(plan?.analysisMeta?.riskGroupDetails) ? plan.analysisMeta.riskGroupDetails : [];
-  const best = plan?.analysisMeta?.bestGroupText || '暫無';
-  const risk = plan?.analysisMeta?.riskGroupText || '暫無';
-  const action = plan?.analysisMeta?.actionAdvice || '先看結果，再決定是否通報';
-  const rows = details.map((d, idx)=>{
-    const st = simpleGroupStatus(d);
-    const reason = [];
-    if(Array.isArray(d?.riskyPairs) && d.riskyPairs.length) reason.push(`碰撞 ${d.riskyPairs.join('、')}`);
-    if(Array.isArray(d?.riskNums) && d.riskNums.length) reason.push(`風險號 ${d.riskNums.join('、')}`);
-    if((d?.decadeConcentration||0) >= 3) reason.push('區段偏集中');
-    if(!reason.length) reason.push('目前沒有明顯爆雷');
-    return `<div class="rowLine ${st.cls}"><b>第${idx+1}組：${st.label}</b><div class="small" style="margin-top:4px;">${escapeHtml((d?.numbers||[]).join('、'))}</div><div class="small" style="margin-top:4px;">${escapeHtml(reason.join('｜'))}</div></div>`;
-  }).join('');
-  const body = $('planAnalysisBody');
-  if(body) body.innerHTML = `
-    <div class="rowLine good"><b>整體結論</b><div class="small" style="margin-top:4px;">${escapeHtml(action)}</div></div>
-    <div class="rowLine"><b>最穩組</b><div class="small" style="margin-top:4px;">${escapeHtml(best)}</div></div>
-    <div class="rowLine warn"><b>優先留意</b><div class="small" style="margin-top:4px;">${escapeHtml(risk)}</div></div>
-    ${rows}
-  `;
-  if($('planAnalysisModal')) $('planAnalysisModal').style.display = 'flex';
-}
-
 const MANUAL_SOURCE_PRESETS = ['無敵/馬上發財', '隨機生成/講難聽點39顆隨機選'];
 const manualSourceState = { lotteryId: '', presets: MANUAL_SOURCE_PRESETS.slice() };
 
@@ -3088,7 +3015,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     renderGroupPreview(id, bestResult);
     applyGeneratedGroupsToLog(id, bestResult.groups);
     setConfirmAvailability(id, true);
-    openPlanAnalysisModal(id, bestResult);
+    openGenerationPreview(id, bestResult, analysis);
     showMiniNotice(`${state.lotteries[id].cfg.title}：已生成方案，請先看分析再決定是否通報`, "ok");
   } catch (err) {
     console.error(err);
@@ -3200,8 +3127,8 @@ function ensureTaskCenterUI(){
   fab.id = 'taskCenterFab';
   fab.className = 'green';
   fab.type = 'button';
-  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>v11.3.2 任務中心</span>'; fab.setAttribute('aria-label','v11.3.2 任務中心');
-  fab.style.cssText = 'position:fixed;right:18px;bottom:max(92px, calc(env(safe-area-inset-bottom, 0px) + 92px));z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
+  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>v11.3.3 任務中心</span>'; fab.setAttribute('aria-label','v11.3.3 任務中心');
+  fab.style.cssText = 'position:fixed;right:18px;bottom:max(22px, calc(env(safe-area-inset-bottom, 0px) + 22px));z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   fab.addEventListener('click', openTaskCenter);
   document.body.appendChild(fab);
 
@@ -3211,7 +3138,7 @@ function ensureTaskCenterUI(){
   broadcastFab.type = 'button';
   broadcastFab.innerHTML = '<span aria-hidden="true">📣</span><span>手動通報</span>';
   broadcastFab.setAttribute('aria-label','手動通報');
-  broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(88px, calc(env(safe-area-inset-bottom, 0px) + 88px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
+  broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(86px, calc(env(safe-area-inset-bottom, 0px) + 86px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   broadcastFab.addEventListener('click', openBroadcastCenter);
   document.body.appendChild(broadcastFab);
 
@@ -3222,7 +3149,7 @@ function ensureTaskCenterUI(){
     <div style="width:min(1080px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(30,5,5,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
         <div>
-          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">v11.3.2 任務中心</div>
+          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">v11.3.3 任務中心</div>
           <div class="small" style="margin-top:4px;">用外掛選單方式先排任務，再決定立即執行或稍後執行。預定時間目前做排隊顯示，不會自動排程。</div>
         </div>
         <div class="btns" style="margin-top:0;">
@@ -3265,6 +3192,44 @@ function ensureTaskCenterUI(){
     </div>`;
   document.body.appendChild(modal);
 
+  const previewModal = document.createElement('div');
+  previewModal.id = 'generationPreviewModal';
+  previewModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10032;backdrop-filter:blur(2px)';
+  previewModal.innerHTML = `
+    <div style="width:min(920px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(30,5,5,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">生成後分析預覽</div>
+          <div class="small" style="margin-top:4px;">先看四組是否夠乾淨，再決定要不要通報。</div>
+        </div>
+        <div class="btns" style="margin-top:0;">
+          <button type="button" class="secondary" id="generationPreviewClose">關閉</button>
+        </div>
+      </div>
+      <div class="analysisPanel" style="margin-top:14px;">
+        <div class="analysisTitle">整體結論</div>
+        <div id="generationPreviewSummary" class="small" style="line-height:1.8;white-space:pre-wrap;">先生成結果，再決定是否通報</div>
+      </div>
+      <div class="analysisWrap" style="margin-top:14px;grid-template-columns:1fr 1fr;">
+        <div class="analysisPanel">
+          <div class="analysisTitle">最穩組</div>
+          <div id="generationPreviewBest" class="small" style="line-height:1.8;white-space:pre-wrap;">尚無</div>
+        </div>
+        <div class="analysisPanel">
+          <div class="analysisTitle">優先留意</div>
+          <div id="generationPreviewRisk" class="small" style="line-height:1.8;white-space:pre-wrap;">尚無</div>
+        </div>
+      </div>
+      <div class="analysisPanel" style="margin-top:14px;">
+        <div class="analysisTitle">四組快速判定</div>
+        <div id="generationPreviewGroups" class="small" style="line-height:1.9;"></div>
+      </div>
+      <div class="btns">
+        <button type="button" class="secondary" id="generationPreviewRegen">重新生成</button>
+        <button type="button" class="green" id="generationPreviewConfirm">確認通報</button>
+      </div>
+    </div>`;
+  document.body.appendChild(previewModal);
   const broadcastModal = document.createElement('div');
   broadcastModal.id = 'broadcastModal';
   broadcastModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10031;backdrop-filter:blur(2px)';
@@ -3496,6 +3461,78 @@ function setBroadcastMode(mode){
   ['broadcastModeAll','broadcastModeCustom'].forEach(id=>{ const btn=$(id); if(btn) btn.classList.toggle('active', btn.dataset.mode===s.mode); });
   if($('broadcastCustomWrap')) $('broadcastCustomWrap').style.display = s.mode === 'custom' ? 'block' : 'none';
   renderBroadcastPreview();
+}
+
+function buildGenerationPreviewState(id, bestResult, analysis){
+  const detailScores = Array.isArray(bestResult?.detailScores) ? bestResult.detailScores : [];
+  const groupNames = [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組'
+  ];
+  const hotCounts = Array.isArray(bestResult?.hotCounts) ? bestResult.hotCounts : [];
+  const riskyPairs = new Set(analysis?.highRiskPairs || []);
+  const riskyTriples = new Set(analysis?.highRiskTriples || []);
+  const riskyNumbers = new Set(Array.from(analysis?.riskyNumberSet || []));
+  const groupRows = groupNames.map((name, idx)=>{
+    const nums = (bestResult?.groups?.[name] || []).map(n=>String(n).padStart(2,'0'));
+    const pairHits = getCombinations(nums,2).filter(pair=>riskyPairs.has(comboKey(pair))).length;
+    const tripleHits = getCombinations(nums,3).filter(triple=>riskyTriples.has(comboKey(triple))).length;
+    const riskyCount = nums.filter(n=>riskyNumbers.has(n)).length;
+    const score = Number(detailScores[idx] || 0);
+    let status = '可用';
+    let reason = '分布正常，可保留';
+    if (tripleHits > 0 || score >= 15 || riskyCount >= 3) { status = '高風險'; reason = '碰撞偏高，建議重生'; }
+    else if (pairHits > 0 || score >= 9 || riskyCount >= 2) { status = '需留意'; reason = '有局部風險，通報前再看一次'; }
+    else if ((hotCounts[idx] || 0) >= 3) { status = '偏熱'; reason = '熱號較多，注意是否過熱'; }
+    return { idx: idx+1, name, nums, score, status, reason, riskyCount, pairHits, tripleHits };
+  });
+  const sorted = [...groupRows].sort((a,b)=>a.score-b.score);
+  const best = sorted[0] || null;
+  const worst = sorted[sorted.length-1] || null;
+  const highCount = groupRows.filter(g=>g.status === '高風險').length;
+  const watchCount = groupRows.filter(g=>g.status === '需留意').length;
+  let summary = '四組風險分散正常，可直接通報。';
+  if (highCount > 0) summary = `目前有 ${highCount} 組高風險，建議先重新生成。`;
+  else if (watchCount > 1) summary = `目前有 ${watchCount} 組需留意，若想更乾淨可再生成一次。`;
+  else if (watchCount === 1) summary = '整體可用，但有 1 組需留意。';
+  return { summary, best, worst, groups: groupRows };
+}
+
+function openGenerationPreview(id, bestResult, analysis){
+  ensureTaskCenterUI();
+  const modal = $('generationPreviewModal');
+  if(!modal) return;
+  const preview = buildGenerationPreviewState(id, bestResult, analysis);
+  state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
+  if($('generationPreviewSummary')) $('generationPreviewSummary').textContent = preview.summary;
+  if($('generationPreviewBest')) $('generationPreviewBest').textContent = preview.best ? `第${preview.best.idx}組｜${preview.best.nums.join('、')}
+${preview.best.reason}` : '尚無';
+  if($('generationPreviewRisk')) $('generationPreviewRisk').textContent = preview.worst ? `第${preview.worst.idx}組｜${preview.worst.nums.join('、')}
+${preview.worst.reason}` : '尚無';
+  if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = preview.groups.map(g=>`<div style="padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:14px;margin-top:8px;">`+
+    `<b>第${g.idx}組【${escapeHtml(g.status)}】</b> ${escapeHtml(g.nums.join('、'))}<br>`+
+    `<span class="small">${escapeHtml(g.reason)}｜風險號 ${g.riskyCount}｜雙碰 ${g.pairHits}｜三碰 ${g.tripleHits}</span></div>`).join('');
+  modal.style.display = 'flex';
+}
+
+function closeGenerationPreview(){
+  if($('generationPreviewModal')) $('generationPreviewModal').style.display = 'none';
+}
+
+function rerunLatestGenerationPreview(){
+  const p = state.lastGenerationPreview;
+  closeGenerationPreview();
+  if(!p || !p.lotteryId) return;
+  $(`${p.lotteryId}_btnGenerateSmart`)?.click();
+}
+
+async function confirmLatestGenerationPreview(){
+  const p = state.lastGenerationPreview;
+  if(!p || !p.lotteryId) return;
+  closeGenerationPreview();
+  await confirmTracking(p.lotteryId);
 }
 
 function openBroadcastCenter(){
