@@ -184,29 +184,6 @@ function setActiveTracking(lotteryType, tracking) {
   return replaceSystemTracking(lotteryType, tracking);
 }
 
-
-function updateTrackingById(lotteryType, trackingId, updater) {
-  const key = normalizeLotteryType(lotteryType);
-  const map = getTrackingMap();
-  const state = map[key] || defaultTypeState();
-  let updated = null;
-  if (state.system && state.system.id === trackingId) {
-    updated = typeof updater === 'function' ? updater(state.system) : { ...state.system, ...(updater || {}) };
-    state.system = updated;
-  } else {
-    state.manuals = (state.manuals || []).map((row) => {
-      if (row.id !== trackingId) return row;
-      updated = typeof updater === 'function' ? updater(row) : { ...row, ...(updater || {}) };
-      return updated;
-    });
-  }
-  if (!updated) return null;
-  map[key] = state;
-  saveTrackingMap(map);
-  appendHistory({ ...updated, event: 'analysis-rebuilt', updatedAt: formatTaipeiDateTime() });
-  return updated;
-}
-
 function settleTracking(lotteryType, trackingId, settlement) {
   const key = normalizeLotteryType(lotteryType);
   const map = getTrackingMap();
@@ -250,6 +227,5 @@ module.exports = {
   replaceManualTracking,
   setActiveTracking,
   settleTracking,
-  updateTrackingById,
   normalizeLotteryType
 };

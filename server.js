@@ -5,21 +5,21 @@ const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
-const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview, recalculateTrackingAnalysis } = require('./trackingService');
+const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview } = require('./trackingService');
 const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
-const { getBotRuntimeSummary, testTelegramSend, callTelegram, broadcastTelegramMessage } = require('./telegram');
+const { getBotRuntimeSummary, testTelegramSend, callTelegram } = require('./telegram');
 const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
-const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug, getDataFile, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
+const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug } = require('./dataPaths');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const storageInit = initializeDataFiles();
 
-app.use(express.json({ limit: '35mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -213,41 +213,6 @@ function withIssueContext(body = {}) {
   };
 }
 
-
-function ensureSeedTrackingRecord() {
-  try {
-    const trackingFile = getDataFile('tracking.json');
-    const trackingMap = readJsonSafe(trackingFile, { '539': { system: null, manuals: [] }, 'ttl': { system: null, manuals: [] } });
-    trackingMap.ttl = trackingMap.ttl || { system: null, manuals: [] };
-    if (trackingMap.ttl.system) return { restored: false, reason: 'ttl-system-exists' };
-    trackingMap.ttl.system = {
-      id: 'ttl_system_20260319212117_seed11821',
-      lotteryType: 'ttl',
-      lotteryTitle: '天天樂',
-      confirmedAt: '2026-03-19 21:21:17',
-      createdAt: '2026-03-19 21:21:17',
-      baseIssue: '11820',
-      startFromIssue: '11821',
-      status: 'pending',
-      trackType: 'system',
-      sourceName: '防2/3碰撞追蹤',
-      labels: { group1:'第一組', group2:'第二組', group3:'第三組', group4:'第四組', full:'全車號碼' },
-      groups: {
-        group1: ['04','06','08','20','31'],
-        group2: ['02','12','21','28','38'],
-        group3: ['05','14','17','30','36'],
-        group4: ['07','10','16','23','24'],
-        full: ['01','03','09','11','13','15','18','19','22','25','26','27','29','32','33','34','35','37','39']
-      },
-      analysis: null
-    };
-    writeJsonAtomic(trackingFile, trackingMap);
-    return { restored: true, trackingId: trackingMap.ttl.system.id };
-  } catch (err) {
-    return { restored: false, error: err.message };
-  }
-}
-
 function scheduleNextUpdate() {
   if (updateTimer) clearTimeout(updateTimer);
   updateTimer = setTimeout(async () => {
@@ -293,10 +258,6 @@ app.get('/api/analysis/compare-active/:type', (req, res) => res.json(compareActi
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
-app.post('/api/tracking/recalculate', (req, res) => {
-  try { res.json(recalculateTrackingAnalysis(req.body || {})); }
-  catch (err) { res.status(400).json({ ok: false, message: err.message || '重算分析失敗' }); }
-});
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
 app.get('/api/recommend/:type', (req, res) => res.json(getRecommendations(req.params.type)));
 
@@ -334,27 +295,6 @@ app.post('/api/telegram/config', (req, res) => {
     res.status(400).json({ ok: false, message: err.message, telegram: getBotRuntimeSummary() });
   }
 });
-
-app.post('/api/telegram/broadcast', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const text = String(body.text || '').trim();
-    const targetMode = String(body.targetMode || 'all').trim();
-    const chatIds = String(body.chatIds || '').trim();
-    const file = body.file && typeof body.file === 'object' ? body.file : null;
-    if (!text && !(file && file.dataUrl)) throw new Error('請輸入文字內容或上傳附件');
-    const result = await broadcastTelegramMessage({
-      text,
-      toAll: targetMode === 'all',
-      chatIds,
-      file
-    });
-    res.json({ ok: true, message: `已送出 ${result.count} 則 Telegram 訊息`, result, telegram: getBotRuntimeSummary() });
-  } catch (err) {
-    res.status(400).json({ ok: false, message: err.message || 'Telegram 發送失敗', telegram: getBotRuntimeSummary() });
-  }
-});
-
 app.post('/api/telegram/test', async (req, res) => {
   try {
     const text = String((req.body && req.body.text) || '【拾柒追蹤系統】Telegram 測試成功').trim();
