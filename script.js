@@ -358,6 +358,7 @@ function openSearchOverlay(id){
   els.eta.textContent = '約 1 秒';
   els.footer.textContent = '會依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
   els.overlay.classList.add('show');
+  els.overlay.style.pointerEvents = 'auto';
   els.overlay.setAttribute('aria-hidden','false');
   searchAnimState.visible = true;
   searchAnimState.running = true;
@@ -371,6 +372,7 @@ function closeSearchOverlay(force=false){
   if(!force && searchAnimState.running){ searchAnimState.cancelRequested = true; }
   clearSearchTimers();
   els.overlay.classList.remove('show');
+  els.overlay.style.pointerEvents = 'none';
   els.overlay.setAttribute('aria-hidden','true');
   searchAnimState.visible = false;
   searchAnimState.running = false;
@@ -1801,8 +1803,16 @@ function formatEta(ms){
     const hasToast = wrap.children.length > 0;
     const taskFab = $('taskCenterFab');
     const broadcastFab = $('broadcastFab');
-    if(taskFab) taskFab.classList.toggle('fabCompact', hasToast);
-    if(broadcastFab) broadcastFab.classList.toggle('fabCompact', hasToast);
+    if(taskFab){
+      taskFab.classList.toggle('fabCompact', hasToast);
+      taskFab.style.transform = hasToast ? 'scale(.94)' : 'scale(1)';
+      taskFab.style.bottom = hasToast ? 'max(32px, calc(env(safe-area-inset-bottom, 0px) + 32px))' : 'max(24px, calc(env(safe-area-inset-bottom, 0px) + 24px))';
+    }
+    if(broadcastFab){
+      broadcastFab.classList.toggle('fabCompact', hasToast);
+      broadcastFab.style.transform = hasToast ? 'scale(.92)' : 'scale(1)';
+      broadcastFab.style.bottom = hasToast ? 'max(122px, calc(env(safe-area-inset-bottom, 0px) + 122px))' : 'max(108px, calc(env(safe-area-inset-bottom, 0px) + 108px))';
+    }
   }
 
   function showMiniNotice(msg, type = "info"){
@@ -1969,7 +1979,7 @@ function formatEta(ms){
 
   async function confirmTracking(id){
     const s = state.lotteries[id];
-    if(!s.generatedGroups || !s.generatedGroups.groups || s.generatedGroups.noQualifiedResult){
+    if(!s.generatedGroups || !s.generatedGroups.groups || s.generatedGroups.noQualifiedResult || s.generatedGroups.canNotify === false){
       showMiniNotice(`${s.cfg.title}：目前沒有合格低風險方案，請先執行自動生成搜尋`, "warn");
       return;
     }
@@ -2848,15 +2858,19 @@ function buildCandidatePlanMetrics(mains, analysis){
   let threeHitRisk = 0;
   const hotCounts = [];
   const detailScores = [];
-  mains.forEach(group => {
+  const groupDetails = [];
+  mains.forEach((group, index) => {
     const sorted = group.map(n => String(n).padStart(2,'0')).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
     const hotCount = sorted.filter(n => hot.has(n)).length;
     const warmCount = sorted.filter(n => warm.has(n)).length;
     const coldCount = sorted.filter(n => cold.has(n)).length;
     const trendCount = sorted.filter(n => trendUp.has(n)).length;
-    const riskyCount = sorted.filter(n => risky.has(n)).length;
-    const pairHitCount = getCombinations(sorted,2).filter(pair => highRiskPairs.has(comboKey(pair))).length;
-    const tripleHitCount = getCombinations(sorted,3).filter(triple => highRiskTriples.has(comboKey(triple))).length;
+    const riskyList = sorted.filter(n => risky.has(n));
+    const riskyCount = riskyList.length;
+    const pairHits = getCombinations(sorted,2).map(pair=>comboKey(pair)).filter(key => highRiskPairs.has(key));
+    const tripleHits = getCombinations(sorted,3).map(triple=>comboKey(triple)).filter(key => highRiskTriples.has(key));
+    const pairHitCount = pairHits.length;
+    const tripleHitCount = tripleHits.length;
     const pairExposure = getCombinations(sorted,2).reduce((sum,pair)=> sum + Number(analysis.pairCounts?.[comboKey(pair)] || 0), 0);
     const tripleExposure = getCombinations(sorted,3).reduce((sum,triple)=> sum + Number(analysis.tripleCounts?.[comboKey(triple)] || 0), 0);
     const tailMap = {};
@@ -2875,25 +2889,73 @@ function buildCandidatePlanMetrics(mains, analysis){
     const tailPenalty = Math.max(0, (Math.max(...Object.values(tailMap)) || 1) - 2);
     const decadePenalty = Math.max(0, (Math.max(...Object.values(decadeMap)) || 1) - 2);
     const oddPenalty = Math.abs(oddCount - 2.5);
-    const coldPenalty = Math.max(0, coldCount - 2) * 0.7;
-    const hotPenalty = Math.max(0, hotCount - 2) * 1.2;
-    const trendBonus = Math.min(2, trendCount) * 1.4 + Math.min(2, warmCount) * 0.6;
-    const score = pairExposure * 1.7 + tripleExposure * 3.4 + pairHitCount * 7 + tripleHitCount * 14 + riskyCount * 1.5 + tailPenalty * 2.2 + decadePenalty * 1.9 + adjacency * 1.4 + oddPenalty + coldPenalty + hotPenalty - trendBonus;
+    const coldPenalty = Math.max(0, coldCount - 1) * 0.65;
+    const hotPenalty = Math.max(0, hotCount - 2) * 1.25;
+    const trendBonus = Math.min(2, trendCount) * 1.45 + Math.min(2, warmCount) * 0.55;
+    const score = pairExposure * 1.15 + tripleExposure * 2.4 + pairHitCount * 5.2 + tripleHitCount * 11.5 + riskyCount * 1.8 + tailPenalty * 2.0 + decadePenalty * 1.7 + adjacency * 1.15 + oddPenalty + coldPenalty + hotPenalty - trendBonus;
     totalScore += score;
     twoHitRisk += pairHitCount;
     threeHitRisk += tripleHitCount;
     hotCounts.push(hotCount);
     detailScores.push(Number(score.toFixed(2)));
+    let status = '可用';
+    let reason = '分散正常，可保留';
+    if (tripleHitCount > 0 || score >= 13.5 || riskyCount >= 3 || pairHitCount >= 2) {
+      status = '高風險';
+      reason = tripleHitCount > 0 ? '命中高風險三碰，整組淘汰' : pairHitCount >= 2 ? '高風險雙碰過多，建議重生' : '風險號過多或分布過擠';
+    } else if (pairHitCount === 1 || score >= 8.6 || riskyCount >= 2 || decadePenalty >= 1 || tailPenalty >= 1) {
+      status = '需留意';
+      reason = pairHitCount === 1 ? '有 1 組高風險雙碰，通報前建議再生' : '局部集中或風險略高';
+    } else if (hotCount >= 3 && trendCount === 0) {
+      status = '偏熱';
+      reason = '熱號偏多，可再觀察';
+    }
+    groupDetails.push({
+      index: index + 1,
+      nums: sorted,
+      hotCount,
+      warmCount,
+      coldCount,
+      trendCount,
+      riskyCount,
+      riskyList,
+      pairHits,
+      tripleHits,
+      pairExposure,
+      tripleExposure,
+      tailPenalty,
+      decadePenalty,
+      adjacency,
+      score: Number(score.toFixed(2)),
+      status,
+      reason
+    });
   });
   const hotSpread = hotCounts.length ? Math.max(...hotCounts) - Math.min(...hotCounts) : 0;
-  totalScore += hotSpread * 2.8;
-  return { totalScore: Number(totalScore.toFixed(2)), twoHitRisk, threeHitRisk, hotCounts, detailScores, hotSpread };
+  const highCount = groupDetails.filter(g => g.status === '高風險').length;
+  const watchCount = groupDetails.filter(g => g.status === '需留意').length;
+  totalScore += hotSpread * 2.3 + highCount * 8.2 + Math.max(0, watchCount - 1) * 2.4;
+  const packStatus = highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報';
+  const canNotify = packStatus === '可通報';
+  return {
+    totalScore: Number(totalScore.toFixed(2)),
+    twoHitRisk,
+    threeHitRisk,
+    hotCounts,
+    detailScores,
+    hotSpread,
+    groupDetails,
+    highCount,
+    watchCount,
+    packStatus,
+    canNotify
+  };
 }
 
 function buildSimpleGeneratedPlan(id, analysis){
-  const hot = (analysis.hot || []).slice(0, 10);
-  const warm = (analysis.warm || []).slice(0, 12);
-  const cold = (analysis.cold || []).slice(0, 10);
+  const hot = (analysis.hot || []).slice(0, 8);
+  const warm = (analysis.warm || []).slice(0, 14);
+  const cold = (analysis.cold || []).slice(0, 8);
   const mid = (analysis.mid || []).filter(n => !hot.includes(n) && !cold.includes(n));
   const trendUp = (analysis.trendUp || []).slice(0, 8);
   const highRiskPairs = new Set(analysis.highRiskPairs || []);
@@ -2908,51 +2970,88 @@ function buildSimpleGeneratedPlan(id, analysis){
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
   const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-  let best = null;
-  const candidateCount = 240;
+  const candidateCount = 1500;
+  let qualified = null;
+  let fallback = null;
+
+  function choosePools(groupIndex){
+    const idx = groupIndex % 4;
+    if(idx === 0) return [shuffle(warm), shuffle(trendUp), shuffle(mid), shuffle(hot).slice(0,6), shuffle(mid), shuffle(cold).slice(0,4)];
+    if(idx === 1) return [shuffle(mid), shuffle(warm), shuffle(trendUp), shuffle(hot).slice(0,5), shuffle(mid), shuffle(cold).slice(0,3)];
+    if(idx === 2) return [shuffle(trendUp), shuffle(mid), shuffle(warm), shuffle(hot).slice(0,5), shuffle(mid), shuffle(cold).slice(0,3)];
+    return [shuffle(mid), shuffle(warm), shuffle(mid), shuffle(trendUp), shuffle(hot).slice(0,4), shuffle(cold).slice(0,3)];
+  }
 
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
     const used = new Set();
     const groups = {};
+    let valid = true;
     for(let gi=0; gi<4; gi++){
-      const pools = [
-        shuffle(trendUp),
-        shuffle(hot),
-        shuffle(warm),
-        shuffle(mid).slice(0, 12),
-        shuffle(mid).slice(12),
-        shuffle(cold)
-      ];
-      groups[groupNames[gi]] = makeGroupFromPools(5, pools, used, highRiskPairs, highRiskTriples, maxNum);
+      let attemptBest = null;
+      for(let localTry=0; localTry<18; localTry++){
+        const localUsed = new Set(Array.from(used));
+        const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
+        if(proposed.length < 5) continue;
+        const metrics = buildCandidatePlanMetrics([proposed], analysis);
+        const detail = metrics.groupDetails[0];
+        if(!attemptBest || detail.score < attemptBest.detail.score){ attemptBest = { proposed, localUsed, detail }; }
+        if(detail.status === '可用' || detail.status === '偏熱') break;
+      }
+      if(!attemptBest || !attemptBest.proposed || !attemptBest.proposed.length){ valid = false; break; }
+      groups[groupNames[gi]] = attemptBest.proposed;
+      used.clear();
+      Array.from(attemptBest.localUsed).forEach(v=>used.add(v));
+      if(attemptBest.detail.status === '高風險'){ valid = false; break; }
     }
-    const preferredFull = shuffle(allNums.filter(n => !used.has(n) && (riskyNumbers.has(n) || cold.includes(n))));
-    const otherFull = shuffle(allNums.filter(n => !used.has(n) && !preferredFull.includes(n)));
+    if(!valid) continue;
+    const preferredFull = shuffle(allNums.filter(n => !used.has(n) && !riskyNumbers.has(n) && !cold.includes(n)));
+    const backupFull = shuffle(allNums.filter(n => !used.has(n) && !preferredFull.includes(n)));
     const full = [];
-    for(const n of [...preferredFull, ...otherFull]){ if(full.length >= 19) break; full.push(n); }
+    for(const n of [...preferredFull, ...backupFull]){ if(full.length >= 19) break; full.push(n); }
     groups[groupNames[4]] = full.sort((a,b)=>parseInt(a,10)-parseInt(b,10));
     const mains = [groups[groupNames[0]], groups[groupNames[1]], groups[groupNames[2]], groups[groupNames[3]]];
     const metrics = buildCandidatePlanMetrics(mains, analysis);
     const candidate = {
       groups,
-      score: Math.max(58, Number((94 - metrics.totalScore).toFixed(1))),
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
       twoHitRisk: metrics.twoHitRisk,
       threeHitRisk: metrics.threeHitRisk,
-      lowRiskGroups: metrics.detailScores.filter(v => v < 8.5).length,
-      mediumRiskGroups: metrics.detailScores.filter(v => v >= 8.5 && v < 14).length,
-      rejectedGroups: 0,
-      selectedPool: 'multi-candidate',
-      downgraded: false,
+      lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
+      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
+      rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
+      selectedPool: 'pack-validation-v1135',
+      downgraded: !metrics.canNotify,
       hotCounts: metrics.hotCounts,
       candidateTotalScore: metrics.totalScore,
       detailScores: metrics.detailScores,
-      whyQualified: `已從 ${candidateCount} 套候選中挑出總風險最低方案；各組熱號數 ${metrics.hotCounts.join(' / ')}，熱號落差 ${metrics.hotSpread}，雙碰 ${metrics.twoHitRisk}，三碰 ${metrics.threeHitRisk}。`
+      packStatus: metrics.packStatus,
+      canNotify: metrics.canNotify,
+      groupDetails: metrics.groupDetails,
+      noQualifiedResult: !metrics.canNotify,
+      score: Number(Math.max(46, (98 - metrics.totalScore)).toFixed(1)),
+      whyQualified: metrics.canNotify
+        ? `已從 ${candidateCount} 套候選中挑出四組都過線的方案；需留意 ${metrics.watchCount} 組，高風險 ${metrics.highCount} 組。`
+        : `已搜尋 ${candidateCount} 套候選，但本輪沒有找到四組都過線的方案；目前僅保留最低風險備選。`
     };
-    if(!best || candidate.candidateTotalScore < best.candidateTotalScore || (candidate.candidateTotalScore === best.candidateTotalScore && candidate.score > best.score)) best = candidate;
+    if(metrics.canNotify){
+      if(!qualified || candidate.candidateTotalScore < qualified.candidateTotalScore) qualified = candidate;
+    } else if(!fallback || candidate.candidateTotalScore < fallback.candidateTotalScore) {
+      fallback = candidate;
+    }
   }
-  return best;
+  return qualified || fallback || {
+    groups: {}, score: 0, searchedCandidates: candidateCount,
+    analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
+    elapsedMs: 0, twoHitRisk: 0, threeHitRisk: 0,
+    lowRiskGroups: 0, mediumRiskGroups: 0, rejectedGroups: 4,
+    selectedPool: 'pack-validation-v1135', downgraded: true,
+    hotCounts: [0,0,0,0], candidateTotalScore: 999,
+    detailScores: [99,99,99,99], packStatus: '不可通報', canNotify: false,
+    groupDetails: [], noQualifiedResult: true,
+    whyQualified: `已搜尋 ${candidateCount} 套候選，但本輪沒有找到可用方案。`
+  };
 }
 
 function bindEvents(id){
@@ -3016,7 +3115,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     applyGeneratedGroupsToLog(id, bestResult.groups);
     setConfirmAvailability(id, true);
     openGenerationPreview(id, bestResult, analysis);
-    showMiniNotice(`${state.lotteries[id].cfg.title}：已生成方案，請先看分析再決定是否通報`, "ok");
+    showMiniNotice(bestResult.canNotify === false ? `${state.lotteries[id].cfg.title}：本輪沒有找到合格方案，請依預覽決定是否重生` : `${state.lotteries[id].cfg.title}：已生成方案，請先看分析再決定是否通報`, bestResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
     console.error(err);
     state.lotteries[id].generatedGroups = null;
@@ -3127,8 +3226,8 @@ function ensureTaskCenterUI(){
   fab.id = 'taskCenterFab';
   fab.className = 'green';
   fab.type = 'button';
-  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>v11.3.3 任務中心</span>'; fab.setAttribute('aria-label','v11.3.3 任務中心');
-  fab.style.cssText = 'position:fixed;right:18px;bottom:max(22px, calc(env(safe-area-inset-bottom, 0px) + 22px));z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
+  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>v11.3.5 任務中心</span>'; fab.setAttribute('aria-label','v11.3.5 任務中心');
+  fab.style.cssText = 'position:fixed;right:18px;bottom:max(24px, calc(env(safe-area-inset-bottom, 0px) + 24px));z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   fab.addEventListener('click', openTaskCenter);
   document.body.appendChild(fab);
 
@@ -3138,7 +3237,7 @@ function ensureTaskCenterUI(){
   broadcastFab.type = 'button';
   broadcastFab.innerHTML = '<span aria-hidden="true">📣</span><span>手動通報</span>';
   broadcastFab.setAttribute('aria-label','手動通報');
-  broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(86px, calc(env(safe-area-inset-bottom, 0px) + 86px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
+  broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(108px, calc(env(safe-area-inset-bottom, 0px) + 108px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   broadcastFab.addEventListener('click', openBroadcastCenter);
   document.body.appendChild(broadcastFab);
 
@@ -3464,46 +3563,45 @@ function setBroadcastMode(mode){
 }
 
 function buildGenerationPreviewState(id, bestResult, analysis){
-  const detailScores = Array.isArray(bestResult?.detailScores) ? bestResult.detailScores : [];
-  const groupNames = [
-    $(`${id}_prize1Desc`).value.trim() || '第一組',
-    $(`${id}_prize2Desc`).value.trim() || '第二組',
-    $(`${id}_prize3Desc`).value.trim() || '第三組',
-    $(`${id}_prize4Desc`).value.trim() || '第四組'
-  ];
-  const hotCounts = Array.isArray(bestResult?.hotCounts) ? bestResult.hotCounts : [];
-  const riskyPairs = new Set(analysis?.highRiskPairs || []);
-  const riskyTriples = new Set(analysis?.highRiskTriples || []);
-  const riskyNumbers = new Set(Array.from(analysis?.riskyNumberSet || []));
-  const groupRows = groupNames.map((name, idx)=>{
-    const nums = (bestResult?.groups?.[name] || []).map(n=>String(n).padStart(2,'0'));
-    const pairHits = getCombinations(nums,2).filter(pair=>riskyPairs.has(comboKey(pair))).length;
-    const tripleHits = getCombinations(nums,3).filter(triple=>riskyTriples.has(comboKey(triple))).length;
-    const riskyCount = nums.filter(n=>riskyNumbers.has(n)).length;
-    const score = Number(detailScores[idx] || 0);
-    let status = '可用';
-    let reason = '分布正常，可保留';
-    if (tripleHits > 0 || score >= 15 || riskyCount >= 3) { status = '高風險'; reason = '碰撞偏高，建議重生'; }
-    else if (pairHits > 0 || score >= 9 || riskyCount >= 2) { status = '需留意'; reason = '有局部風險，通報前再看一次'; }
-    else if ((hotCounts[idx] || 0) >= 3) { status = '偏熱'; reason = '熱號較多，注意是否過熱'; }
-    return { idx: idx+1, name, nums, score, status, reason, riskyCount, pairHits, tripleHits };
-  });
+  const metrics = bestResult?.groupDetails?.length ? {
+    groupDetails: bestResult.groupDetails,
+    packStatus: bestResult.packStatus || '不可通報',
+    canNotify: !!bestResult.canNotify,
+    watchCount: (bestResult.groupDetails || []).filter(g => g.status === '需留意').length,
+    highCount: (bestResult.groupDetails || []).filter(g => g.status === '高風險').length
+  } : buildCandidatePlanMetrics([
+    bestResult?.groups?.[$(`${id}_prize1Desc`).value.trim() || '第一組'] || [],
+    bestResult?.groups?.[$(`${id}_prize2Desc`).value.trim() || '第二組'] || [],
+    bestResult?.groups?.[$(`${id}_prize3Desc`).value.trim() || '第三組'] || [],
+    bestResult?.groups?.[$(`${id}_prize4Desc`).value.trim() || '第四組'] || []
+  ], analysis || {});
+  const groupRows = (metrics.groupDetails || []).map((detail, idx)=>({
+    idx: detail.index || idx + 1,
+    nums: detail.nums || [],
+    score: Number(detail.score || 0),
+    status: detail.status || '可用',
+    reason: detail.reason || '可保留',
+    riskyCount: Number(detail.riskyCount || 0),
+    pairHits: Array.isArray(detail.pairHits) ? detail.pairHits.length : Number(detail.pairHits || 0),
+    tripleHits: Array.isArray(detail.tripleHits) ? detail.tripleHits.length : Number(detail.tripleHits || 0)
+  }));
   const sorted = [...groupRows].sort((a,b)=>a.score-b.score);
   const best = sorted[0] || null;
   const worst = sorted[sorted.length-1] || null;
-  const highCount = groupRows.filter(g=>g.status === '高風險').length;
-  const watchCount = groupRows.filter(g=>g.status === '需留意').length;
-  let summary = '四組風險分散正常，可直接通報。';
-  if (highCount > 0) summary = `目前有 ${highCount} 組高風險，建議先重新生成。`;
-  else if (watchCount > 1) summary = `目前有 ${watchCount} 組需留意，若想更乾淨可再生成一次。`;
-  else if (watchCount === 1) summary = '整體可用，但有 1 組需留意。';
-  return { summary, best, worst, groups: groupRows };
+  const highCount = metrics.highCount ?? groupRows.filter(g=>g.status==='高風險').length;
+  const watchCount = metrics.watchCount ?? groupRows.filter(g=>g.status==='需留意').length;
+  let summary = '四組已通過驗收，可直接通報。';
+  if (highCount > 0) summary = `本輪不通報：有 ${highCount} 組超過風險線，請直接重新生成。`;
+  else if (watchCount > 1) summary = `本輪偏髒：有 ${watchCount} 組需留意，建議再生一次。`;
+  else if (watchCount === 1) summary = '本輪可用，但有 1 組需留意。';
+  return { summary, best, worst, groups: groupRows, canNotify: !!metrics.canNotify, packStatus: metrics.packStatus || (highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報') };
 }
 
 function openGenerationPreview(id, bestResult, analysis){
   ensureTaskCenterUI();
   const modal = $('generationPreviewModal');
   if(!modal) return;
+  closeSearchOverlay(true);
   const preview = buildGenerationPreviewState(id, bestResult, analysis);
   state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
   if($('generationPreviewSummary')) $('generationPreviewSummary').textContent = preview.summary;
@@ -3513,7 +3611,15 @@ ${preview.best.reason}` : '尚無';
 ${preview.worst.reason}` : '尚無';
   if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = preview.groups.map(g=>`<div style="padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:14px;margin-top:8px;">`+
     `<b>第${g.idx}組【${escapeHtml(g.status)}】</b> ${escapeHtml(g.nums.join('、'))}<br>`+
-    `<span class="small">${escapeHtml(g.reason)}｜風險號 ${g.riskyCount}｜雙碰 ${g.pairHits}｜三碰 ${g.tripleHits}</span></div>`).join('');
+    `<span class="small">${escapeHtml(g.reason)}${g.riskyCount ? `｜風險號 ${g.riskyCount}` : ''}${g.pairHits ? `｜雙碰 ${g.pairHits}` : ''}${g.tripleHits ? `｜三碰 ${g.tripleHits}` : ''}</span></div>`).join('');
+  const confirmBtn = $('generationPreviewConfirm');
+  if(confirmBtn){
+    confirmBtn.disabled = !preview.canNotify;
+    confirmBtn.textContent = preview.canNotify ? '確認通報' : '此套不通報';
+    confirmBtn.style.opacity = preview.canNotify ? '1' : '0.55';
+    confirmBtn.style.cursor = preview.canNotify ? 'pointer' : 'not-allowed';
+  }
+  modal.style.pointerEvents = 'auto';
   modal.style.display = 'flex';
 }
 
@@ -3531,6 +3637,7 @@ function rerunLatestGenerationPreview(){
 async function confirmLatestGenerationPreview(){
   const p = state.lastGenerationPreview;
   if(!p || !p.lotteryId) return;
+  if(!p.preview?.canNotify){ showMiniNotice('本輪方案尚未通過整套驗收，請重新生成', 'warn'); return; }
   closeGenerationPreview();
   await confirmTracking(p.lotteryId);
 }
@@ -3633,6 +3740,10 @@ function clearBroadcastForm(){
     $('broadcastText')?.addEventListener('input', renderBroadcastPreview);
     $('broadcastChatIds')?.addEventListener('input', renderBroadcastPreview);
     $('broadcastFile')?.addEventListener('change', onBroadcastFileChange);
+    $('generationPreviewClose')?.addEventListener('click', closeGenerationPreview);
+    $('generationPreviewRegen')?.addEventListener('click', rerunLatestGenerationPreview);
+    $('generationPreviewConfirm')?.addEventListener('click', confirmLatestGenerationPreview);
+    $('generationPreviewModal')?.addEventListener('click', (e)=>{ if(e.target === $('generationPreviewModal')) closeGenerationPreview(); });
 
     await initLottery("ttl", restored);
     await initLottery("l539", restored);
