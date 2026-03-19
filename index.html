@@ -3038,12 +3038,13 @@ function formatEta(ms){
     const s = state.lotteries[id];
     const manualSourceInput = $(`${id}_manualSource`);
     const sourceName = String((manualSourceInput?.value ?? manualSourceInput?.getAttribute('value') ?? '')).trim() || '手動追蹤';
+    const maxNum = s.cfg.maxNum;
     const parsed = {
-      group1: parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), s.cfg.maxNum),
-      group2: parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), s.cfg.maxNum),
-      group3: parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), s.cfg.maxNum),
-      group4: parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum),
-      full: parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum)
+      group1: parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), maxNum),
+      group2: parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), maxNum),
+      group3: parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), maxNum),
+      group4: parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), maxNum),
+      full: parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), maxNum)
     };
     const fallback = getCurrentPlanGroupsForManual(id) || {};
     const normalizedGroups = {
@@ -3084,38 +3085,13 @@ function formatEta(ms){
           analysis: buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null)
         })
       });
-  function parseManualGroupInput(value, maxNum){
-    const matches = String(value || '').match(/\d{1,2}/g) || [];
-    return matches
-      .map(n => parseInt(n,10))
-      .filter(n => Number.isInteger(n) && n >= 1 && n <= maxNum)
-      .map(n => String(n).padStart(2,'0'));
-  }
-
-function getCurrentPlanGroupsForManual(id){
-  const s = state.lotteries[id] || {};
-  const plan = s.generatedGroups && s.generatedGroups.groups ? s.generatedGroups.groups : null;
-  if(!plan) return null;
-  const names = [
-    $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
-    $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
-    $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
-    $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
-    $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
-  ];
-  return {
-    group1: Array.isArray(plan[names[0]]) ? plan[names[0]] : [],
-    group2: Array.isArray(plan[names[1]]) ? plan[names[1]] : [],
-    group3: Array.isArray(plan[names[2]]) ? plan[names[2]] : [],
-    group4: Array.isArray(plan[names[3]]) ? plan[names[3]] : [],
-    full: Array.isArray(plan[names[4]]) ? plan[names[4]] : []
-  };
-}
       await refreshTrackingBoard(id, { silent: true });
+      showMiniNotice(result?.message || `${s.cfg.title}：已新增手動追蹤`, 'ok');
     }catch(err){
       showMiniNotice(`${s.cfg.title}：手動追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }
   }
+
   function parseManualGroupInput(value, maxNum){
     return cleanupInput(String(value || '').split(/[^\d]+/), 'digits')
       .map(n => parseInt(n,10))
@@ -3123,7 +3099,25 @@ function getCurrentPlanGroupsForManual(id){
       .map(n => String(n).padStart(2,'0'));
   }
 
-
+  function getCurrentPlanGroupsForManual(id){
+    const s = state.lotteries[id] || {};
+    const plan = s.generatedGroups && s.generatedGroups.groups ? s.generatedGroups.groups : null;
+    if(!plan) return null;
+    const names = [
+      $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
+      $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
+      $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
+      $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
+      $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
+    ];
+    return {
+      group1: Array.isArray(plan[names[0]]) ? plan[names[0]] : [],
+      group2: Array.isArray(plan[names[1]]) ? plan[names[1]] : [],
+      group3: Array.isArray(plan[names[2]]) ? plan[names[2]] : [],
+      group4: Array.isArray(plan[names[3]]) ? plan[names[3]] : [],
+      full: Array.isArray(plan[names[4]]) ? plan[names[4]] : []
+    };
+  }
 
 function pickRandom(list, used){
   const arr = list.filter(n => !used.has(n));
@@ -3678,7 +3672,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
   const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-  const candidateCount = 220;
+  const candidateCount = 320;
   let qualified = null;
   let fallback = null;
 
@@ -3747,7 +3741,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   function optimizeCandidatePack(seedGroups){
     let bestGroups = JSON.parse(JSON.stringify(seedGroups));
     let bestMetrics = buildCandidatePlanMetrics([bestGroups[groupNames[0]], bestGroups[groupNames[1]], bestGroups[groupNames[2]], bestGroups[groupNames[3]]], analysis);
-    for(let round=0; round<4; round++){
+    for(let round=0; round<6; round++){
       if(bestMetrics.canNotify) break;
       const ordered = bestMetrics.groupDetails.slice().sort((a,b)=>{
         const weight = { '高風險': 3, '需留意': 2, '偏熱': 1, '可用': 0 };
@@ -3756,7 +3750,8 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         return (b.score||0) - (a.score||0);
       });
       let mutated = false;
-      for(const detail of ordered.slice(0, 2)){
+      const locked = new Set(bestMetrics.groupDetails.filter(g => g.status === '可用' && g.score <= 8.8).map(g => g.index));
+      for(const detail of ordered.filter(g => !locked.has(g.index)).slice(0, 2)){
         const targetName = groupNames[detail.index - 1];
         const fixedUsed = new Set();
         for(let gi=0; gi<4; gi++){
@@ -3766,7 +3761,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         }
         let bestLocalGroups = null;
         let bestLocalMetrics = null;
-        for(let localTry=0; localTry<6; localTry++){
+        for(let localTry=0; localTry<8; localTry++){
           const localUsed = new Set(Array.from(fixedUsed));
           const safeMid = shuffle((mid || []).filter(n=>!riskyNumbers.has(n) && !cold.includes(n)));
           const safeWarm = shuffle((warm || []).filter(n=>!riskyNumbers.has(n)));
@@ -3797,16 +3792,17 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   }
 
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
-    if(candidateIndex % 20 === 0){
+    if(searchAnimState.cancelRequested){ throw new Error('已取消生成'); }
+    if(candidateIndex % 10 === 0){
       if(typeof onProgress === "function") onProgress({ searched: candidateIndex, target: candidateCount, elapsedMs: candidateIndex * 6, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: "生成中", footerText: "系統正在分批尋找較乾淨的候選方案…" });
-      await sleep(0);
+      await sleep(8);
     }
     const used = new Set();
     const groups = {};
     let valid = true;
     for(let gi=0; gi<4; gi++){
       let attemptBest = null;
-      for(let localTry=0; localTry<6; localTry++){
+      for(let localTry=0; localTry<8; localTry++){
         const localUsed = new Set(Array.from(used));
         const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
         if(proposed.length < 5) continue;
@@ -3979,7 +3975,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
       input.addEventListener("focus", handler);
       input.addEventListener("click", handler);
       input.addEventListener("input", ()=>{
-        input.value = parseManualGroupInput(input.value || '', 39).join(' ');
+        input.value = parseManualGroupInput(input.value || '', state.lotteries[id].cfg.maxNum).join(' ');
         persistAll();
       });
     });

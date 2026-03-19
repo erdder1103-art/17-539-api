@@ -391,7 +391,6 @@ process.on('unhandledRejection', (err) => console.error('unhandledRejection:', e
 process.on('uncaughtException', (err) => console.error('uncaughtException:', err));
 
 app.listen(PORT, async () => {
-  const seedRestore = ensureSeedTrackingRecord();
   console.log(`API Server running http://localhost:${PORT}`);
   console.log('Storage data dir:', ACTIVE_DATA_DIR);
   console.log('Storage volume dir:', DEFAULT_VOLUME_DIR);
