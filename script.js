@@ -504,6 +504,7 @@ function cleanupNumbers(arr, maxNum){
       lastAction: null,
       historyAnalysis: null,
       generatedGroups: null,
+      smartLocks: {},
       autoRefreshEnabled: true,
       rolling: false,
       lastSyncHash: "",
@@ -1294,6 +1295,7 @@ function cleanupNumbers(arr, maxNum){
 
   
   async function buildSmartGroups(id, analysis, onProgress){
+  const stateLocks = getLockedGroupMap(id);
     const startedAt = Date.now();
     const target = 1;
     if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布直接生成方案。` });
@@ -2372,44 +2374,34 @@ function formatEta(ms){
 
   async function submitManualTracking(id){
     const s = state.lotteries[id];
-    const manualSourceInput = $(`${id}_manualSource`);
-    const sourceName = String((manualSourceInput?.value ?? manualSourceInput?.getAttribute('value') ?? '')).trim() || '手動追蹤';
+    const sourceName = String(($(`${id}_manualSource`)?.value || '')).trim() || '手動追蹤';
     const maxNum = s.cfg.maxNum;
-    const parsed = {
-      group1: parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), maxNum),
-      group2: parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), maxNum),
-      group3: parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), maxNum),
-      group4: parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), maxNum),
-      full: parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), maxNum)
-    };
-    const fallback = getCurrentPlanGroupsForManual(id) || {};
-    const normalizedGroups = {
-      group1: parsed.group1.length === 5 ? parsed.group1 : (Array.isArray(fallback.group1) && fallback.group1.length === 5 ? fallback.group1 : parsed.group1),
-      group2: parsed.group2.length === 5 ? parsed.group2 : (Array.isArray(fallback.group2) && fallback.group2.length === 5 ? fallback.group2 : parsed.group2),
-      group3: parsed.group3.length === 5 ? parsed.group3 : (Array.isArray(fallback.group3) && fallback.group3.length === 5 ? fallback.group3 : parsed.group3),
-      group4: parsed.group4.length === 5 ? parsed.group4 : (Array.isArray(fallback.group4) && fallback.group4.length === 5 ? fallback.group4 : parsed.group4),
-      full: parsed.full.length === 19 ? parsed.full : (Array.isArray(fallback.full) && fallback.full.length === 19 ? fallback.full : parsed.full)
-    };
-    [['manualGroup1', normalizedGroups.group1], ['manualGroup2', normalizedGroups.group2], ['manualGroup3', normalizedGroups.group3], ['manualGroup4', normalizedGroups.group4], ['manualFull', normalizedGroups.full]].forEach(([field, vals])=>{
-      const input = $(`${id}_${field}`);
-      if(input && Array.isArray(vals) && vals.length) input.value = vals.join(' ');
-    });
-    const groups = [normalizedGroups.group1, normalizedGroups.group2, normalizedGroups.group3, normalizedGroups.group4];
-    const sizes = groups.map(g => Array.isArray(g) ? g.length : 0);
+    const group1 = parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), maxNum);
+    const group2 = parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), maxNum);
+    const group3 = parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), maxNum);
+    const group4 = parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), maxNum);
+    const full = parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), maxNum);
+    const groups = [group1, group2, group3, group4];
     if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
-      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼（目前 ${sizes.join('/')}）`, 'warn');
+      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼（目前 ${groups.map(g=>g.length).join('/')}）`, 'warn');
       return;
     }
-    if(new Set(groups.flat()).size !== groups.flat().length){
+    const merged = groups.flat();
+    if(new Set(merged).size !== merged.length){
       showMiniNotice(`${s.cfg.title}：手動第一組到第四組之間不可重複`, 'warn');
       return;
     }
-    if(normalizedGroups.full.length !== 19 || new Set(normalizedGroups.full).size !== 19){
-      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼（目前 ${normalizedGroups.full.length} 顆）`, 'warn');
+    if(full.length !== 19 || new Set(full).size !== 19){
+      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼（目前 ${full.length} 顆）`, 'warn');
       return;
     }
+    const normalizedGroups = { group1, group2, group3, group4, full };
+    [['manualGroup1', group1], ['manualGroup2', group2], ['manualGroup3', group3], ['manualGroup4', group4], ['manualFull', full]].forEach(([field, vals])=>{
+      const input = $(`${id}_${field}`);
+      if(input) input.value = vals.join(' ');
+    });
     try{
-      const result = await postJsonApi('/api/manual-tracking', {
+      const res = await fetch(`${API_BASE}/api/manual-tracking`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2421,6 +2413,8 @@ function formatEta(ms){
           analysis: buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null)
         })
       });
+      const result = await res.json().catch(()=>null);
+      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
       await refreshTrackingBoard(id, { silent: true });
       showMiniNotice(result?.message || `${s.cfg.title}：已新增手動追蹤`, 'ok');
     }catch(err){
@@ -2433,6 +2427,26 @@ function formatEta(ms){
       .map(n => parseInt(n,10))
       .filter(n => Number.isInteger(n) && n >= 1 && n <= maxNum)
       .map(n => String(n).padStart(2,'0'));
+  }
+
+  function getLockedGroupMap(id){
+    return state.lotteries[id].smartLocks || {};
+  }
+
+  function setLockedGroupsFromPreview(id, preview){
+    const s = state.lotteries[id];
+    const nextLocks = Object.assign({}, s.smartLocks || {});
+    (preview?.groups || []).forEach(g=>{
+      if(g && (g.status === '可用' || g.status === '偏熱') && Array.isArray(g.nums) && g.nums.length === 5){
+        nextLocks[g.idx] = g.nums.slice();
+      }
+    });
+    s.smartLocks = nextLocks;
+    return nextLocks;
+  }
+
+  function clearLockedGroups(id){
+    state.lotteries[id].smartLocks = {};
   }
 
   function getCurrentPlanGroupsForManual(id){
@@ -2991,6 +3005,7 @@ function buildCandidatePlanMetrics(mains, analysis){
 }
 
 async function buildSimpleGeneratedPlan(id, analysis, onProgress){
+  const stateLocks = getLockedGroupMap(id);
   const hot = (analysis.hot || []).slice(0, 8);
   const warm = (analysis.warm || []).slice(0, 14);
   const cold = (analysis.cold || []).slice(0, 8);
@@ -3007,8 +3022,10 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     $(`${id}_prize4Desc`).value.trim() || '第四組',
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
-  const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-  const candidateCount = 320;
+    openGenerationPreview(id, bestResult, analysis);
+    const lockedNow = Object.keys(setLockedGroupsFromPreview(id, state.lastGenerationPreview?.preview || null)).length;
+    const lockMsg = lockedNow ? `，已鎖定 ${lockedNow} 組較穩方案` : '';
+    showMiniNotice(bestResult.canNotify === false ? `${state.lotteries[id].cfg.title}：本輪沒有找到合格方案${lockMsg}，請依預覽決定是否重生` : `${state.lotteries[id].cfg.title}：已生成方案${lockMsg}，請先看分析再決定是否通報`, bestResult.canNotify === false ? 'warn' : 'ok');
   let qualified = null;
   let fallback = null;
 
@@ -3026,6 +3043,12 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     const used = new Set();
     const groups = {};
     for(let gi=0; gi<4; gi++){
+      const locked = lockedByIndex[gi+1];
+      if(Array.isArray(locked) && locked.length === 5){
+        groups[groupNames[gi]] = locked.slice().sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        locked.forEach(v=>used.add(v));
+        continue;
+      }
       let bestLocal = null;
       for(let localTry=0; localTry<10; localTry++){
         const localUsed = new Set(Array.from(used));
@@ -3086,7 +3109,8 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         return (b.score||0) - (a.score||0);
       });
       let mutated = false;
-      const locked = new Set(bestMetrics.groupDetails.filter(g => g.status === '可用' && g.score <= 8.8).map(g => g.index));
+      const locked = new Set([1,2,3,4].filter(i => Array.isArray(lockedByIndex[i]) && lockedByIndex[i].length === 5));
+      bestMetrics.groupDetails.filter(g => g.status === '可用' && g.score <= 8.8).forEach(g => locked.add(g.index));
       for(const detail of ordered.filter(g => !locked.has(g.index)).slice(0, 2)){
         const targetName = groupNames[detail.index - 1];
         const fixedUsed = new Set();
@@ -3137,6 +3161,12 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     const groups = {};
     let valid = true;
     for(let gi=0; gi<4; gi++){
+      const locked = lockedByIndex[gi+1];
+      if(Array.isArray(locked) && locked.length === 5){
+        groups[groupNames[gi]] = locked.slice().sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        locked.forEach(v=>used.add(v));
+        continue;
+      }
       let attemptBest = null;
       for(let localTry=0; localTry<8; localTry++){
         const localUsed = new Set(Array.from(used));
@@ -3262,7 +3292,9 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     applyGeneratedGroupsToLog(id, bestResult.groups);
     setConfirmAvailability(id, true);
     openGenerationPreview(id, bestResult, analysis);
-    showMiniNotice(bestResult.canNotify === false ? `${state.lotteries[id].cfg.title}：本輪沒有找到合格方案，請依預覽決定是否重生` : `${state.lotteries[id].cfg.title}：已生成方案，請先看分析再決定是否通報`, bestResult.canNotify === false ? 'warn' : 'ok');
+    const lockedNow = Object.keys(setLockedGroupsFromPreview(id, state.lastGenerationPreview?.preview || null)).length;
+    const lockMsg = lockedNow ? `，已鎖定 ${lockedNow} 組較穩方案` : '';
+    showMiniNotice(bestResult.canNotify === false ? `${state.lotteries[id].cfg.title}：本輪沒有找到合格方案${lockMsg}，請依預覽決定是否重生` : `${state.lotteries[id].cfg.title}：已生成方案${lockMsg}，請先看分析再決定是否通報`, bestResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
     console.error(err);
     state.lotteries[id].generatedGroups = null;
@@ -3808,6 +3840,7 @@ async function confirmLatestGenerationPreview(){
   if(!p.preview?.canNotify){ showMiniNotice('本輪方案尚未通過整套驗收，請重新生成', 'warn'); return; }
   closeGenerationPreview();
   await confirmTracking(p.lotteryId);
+  clearLockedGroups(p.lotteryId);
 }
 
 function openBroadcastCenter(){
