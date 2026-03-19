@@ -10,7 +10,7 @@ const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
-const { getBotRuntimeSummary, testTelegramSend, callTelegram } = require('./telegram');
+const { getBotRuntimeSummary, testTelegramSend, callTelegram, broadcastTelegramMessage } = require('./telegram');
 const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
 const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug } = require('./dataPaths');
@@ -18,8 +18,9 @@ const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles
 const app = express();
 const PORT = process.env.PORT || 3000;
 const storageInit = initializeDataFiles();
+restoreSeedTrackingIfNeeded();
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '35mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -229,6 +230,24 @@ function scheduleNextUpdate() {
 app.get('/api/539', (req, res) => res.json({ game: '539', updated: lastUpdate, timezone: 'Asia/Taipei', count: cache539.length, draws: cache539 }));
 app.get('/api/ttl', (req, res) => res.json({ game: 'ttl', updated: lastUpdate, timezone: 'Asia/Taipei', count: cacheTTL.length, draws: cacheTTL }));
 app.get('/api/all', (req, res) => res.json({ updated: lastUpdate, timezone: 'Asia/Taipei', lotto539: { count: cache539.length, draws: cache539 }, ttl: { count: cacheTTL.length, draws: cacheTTL } }));
+
+function restoreSeedTrackingIfNeeded() {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const localSeed = path.join(__dirname, 'data', 'tracking.json');
+    const activeFile = getDataFile('tracking.json');
+    if (!fs.existsSync(localSeed)) return;
+    const seed = JSON.parse(fs.readFileSync(localSeed, 'utf8'));
+    const current = readJsonSafe(activeFile, { '539': { system: null, manuals: [] }, 'ttl': { system: null, manuals: [] } });
+    if (!current || !current.ttl || !current.ttl.system) {
+      writeJsonAtomic(activeFile, seed);
+    }
+  } catch (err) {
+    console.warn('restoreSeedTrackingIfNeeded failed:', err.message);
+  }
+}
+
 function getHealthSnapshot() {
   return {
     ok: true,
@@ -299,6 +318,27 @@ app.post('/api/telegram/config', (req, res) => {
     res.status(400).json({ ok: false, message: err.message, telegram: getBotRuntimeSummary() });
   }
 });
+
+app.post('/api/telegram/broadcast', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const text = String(body.text || '').trim();
+    const targetMode = String(body.targetMode || 'all').trim();
+    const chatIds = String(body.chatIds || '').trim();
+    const file = body.file && typeof body.file === 'object' ? body.file : null;
+    if (!text && !(file && file.dataUrl)) throw new Error('請輸入文字內容或上傳附件');
+    const result = await broadcastTelegramMessage({
+      text,
+      toAll: targetMode === 'all',
+      chatIds,
+      file
+    });
+    res.json({ ok: true, message: `已送出 ${result.count} 則 Telegram 訊息`, result, telegram: getBotRuntimeSummary() });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || 'Telegram 發送失敗', telegram: getBotRuntimeSummary() });
+  }
+});
+
 app.post('/api/telegram/test', async (req, res) => {
   try {
     const text = String((req.body && req.body.text) || '【拾柒追蹤系統】Telegram 測試成功').trim();
