@@ -3226,7 +3226,7 @@ function ensureTaskCenterUI(){
   fab.id = 'taskCenterFab';
   fab.className = 'green';
   fab.type = 'button';
-  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>v11.3.5 任務中心</span>'; fab.setAttribute('aria-label','v11.3.5 任務中心');
+  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>任務模式</span>'; fab.setAttribute('aria-label','任務模式');
   fab.style.cssText = 'position:fixed;right:18px;bottom:max(24px, calc(env(safe-area-inset-bottom, 0px) + 24px));z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   fab.addEventListener('click', openTaskCenter);
   document.body.appendChild(fab);
@@ -3235,8 +3235,8 @@ function ensureTaskCenterUI(){
   broadcastFab.id = 'broadcastFab';
   broadcastFab.className = 'green';
   broadcastFab.type = 'button';
-  broadcastFab.innerHTML = '<span aria-hidden="true">📣</span><span>手動通報</span>';
-  broadcastFab.setAttribute('aria-label','手動通報');
+  broadcastFab.innerHTML = '<span aria-hidden="true">📣</span><span>群組通報</span>';
+  broadcastFab.setAttribute('aria-label','群組通報');
   broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(108px, calc(env(safe-area-inset-bottom, 0px) + 108px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   broadcastFab.addEventListener('click', openBroadcastCenter);
   document.body.appendChild(broadcastFab);
@@ -3248,7 +3248,7 @@ function ensureTaskCenterUI(){
     <div style="width:min(1080px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(30,5,5,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
         <div>
-          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">v11.3.3 任務中心</div>
+          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">任務模式</div>
           <div class="small" style="margin-top:4px;">用外掛選單方式先排任務，再決定立即執行或稍後執行。預定時間目前做排隊顯示，不會自動排程。</div>
         </div>
         <div class="btns" style="margin-top:0;">
@@ -3336,7 +3336,7 @@ function ensureTaskCenterUI(){
     <div style="width:min(980px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(160,77,255,.24);background:linear-gradient(180deg, rgba(52,21,92,.98), rgba(17,8,32,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
         <div>
-          <div style="font-size:24px;font-weight:900;color:#f0d9ff;">Telegram 手動通報</div>
+          <div style="font-size:24px;font-weight:900;color:#f0d9ff;">Telegram 群組通報</div>
           <div class="small" style="margin-top:4px;">可直接輸入內容後送出，並支援圖片、影片或一般檔案。</div>
         </div>
         <div class="btns" style="margin-top:0;">
@@ -3563,29 +3563,36 @@ function setBroadcastMode(mode){
 }
 
 function buildGenerationPreviewState(id, bestResult, analysis){
+  const orderNames = [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組'
+  ];
+  const fallbackMainGroups = orderNames.map(name => Array.isArray(bestResult?.groups?.[name]) ? bestResult.groups[name] : []);
   const metrics = bestResult?.groupDetails?.length ? {
     groupDetails: bestResult.groupDetails,
     packStatus: bestResult.packStatus || '不可通報',
     canNotify: !!bestResult.canNotify,
     watchCount: (bestResult.groupDetails || []).filter(g => g.status === '需留意').length,
     highCount: (bestResult.groupDetails || []).filter(g => g.status === '高風險').length
-  } : buildCandidatePlanMetrics([
-    bestResult?.groups?.[$(`${id}_prize1Desc`).value.trim() || '第一組'] || [],
-    bestResult?.groups?.[$(`${id}_prize2Desc`).value.trim() || '第二組'] || [],
-    bestResult?.groups?.[$(`${id}_prize3Desc`).value.trim() || '第三組'] || [],
-    bestResult?.groups?.[$(`${id}_prize4Desc`).value.trim() || '第四組'] || []
-  ], analysis || {});
-  const groupRows = (metrics.groupDetails || []).map((detail, idx)=>({
-    idx: detail.index || idx + 1,
-    nums: detail.nums || [],
-    score: Number(detail.score || 0),
-    status: detail.status || '可用',
-    reason: detail.reason || '可保留',
-    riskyCount: Number(detail.riskyCount || 0),
-    pairHits: Array.isArray(detail.pairHits) ? detail.pairHits.length : Number(detail.pairHits || 0),
-    tripleHits: Array.isArray(detail.tripleHits) ? detail.tripleHits.length : Number(detail.tripleHits || 0)
-  }));
-  const sorted = [...groupRows].sort((a,b)=>a.score-b.score);
+  } : buildCandidatePlanMetrics(fallbackMainGroups, analysis || {});
+  const groupRows = (metrics.groupDetails || []).map((detail, idx)=>{
+    const fallbackNums = Array.isArray(fallbackMainGroups[idx]) ? fallbackMainGroups[idx] : [];
+    const nums = (Array.isArray(detail.nums) && detail.nums.length ? detail.nums : fallbackNums).map(n=>String(n).padStart(2,'0'));
+    return ({
+      idx: detail.index || idx + 1,
+      nums,
+      score: Number(detail.score || 0),
+      status: detail.status || '可用',
+      reason: detail.reason || '可保留',
+      riskyCount: Number(detail.riskyCount || 0),
+      pairHits: Array.isArray(detail.pairHits) ? detail.pairHits.length : Number(detail.pairHits || 0),
+      tripleHits: Array.isArray(detail.tripleHits) ? detail.tripleHits.length : Number(detail.tripleHits || 0)
+    });
+  });
+  const usableRows = groupRows.filter(g=>g.nums.length);
+  const sorted = [...(usableRows.length ? usableRows : groupRows)].sort((a,b)=>a.score-b.score);
   const best = sorted[0] || null;
   const worst = sorted[sorted.length-1] || null;
   const highCount = metrics.highCount ?? groupRows.filter(g=>g.status==='高風險').length;
