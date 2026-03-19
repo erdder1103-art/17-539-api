@@ -512,7 +512,7 @@
     .toast.info{border-color:rgba(120,200,255,.42)}
     #taskCenterFab.fabCompact{padding:12px 13px !important;transform:translateY(-72px) scale(.9);opacity:.94}
     #taskCenterFab,#broadcastFab{display:flex;align-items:center;gap:8px;max-width:min(42vw,220px)}#taskCenterFab.fabCompact span:last-child,#broadcastFab.fabCompact span:last-child{display:none}@media (max-width:900px){#taskCenterFab,#broadcastFab{right:12px !important;max-width:44vw}}
-    #broadcastFab{background:linear-gradient(135deg,#7a3b0f,#b96a1e);border:1px solid rgba(255,231,168,.28)}
+    #broadcastFab{color:#173300;background:linear-gradient(180deg, #dfffbf, #7ed957);border:1px solid rgba(223,255,191,.35)}
     #broadcastTargetModeRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
     .broadcast-pill{padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.16);cursor:pointer;background:rgba(255,255,255,.06);color:#f7f7f7;font-size:13px}
     .broadcast-pill.active{background:rgba(255,231,168,.16);border-color:rgba(247,215,123,.4);color:#ffe7a8}
@@ -4231,7 +4231,14 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     $(`${id}_prize3Desc`).value.trim() || '第三組',
     $(`${id}_prize4Desc`).value.trim() || '第四組'
   ];
-  const fallbackMainGroups = orderNames.map(name => Array.isArray(bestResult?.groups?.[name]) ? bestResult.groups[name] : []);
+  const sourceGroups = bestResult?.groups || state?.lotteries?.[id]?.generatedGroups?.groups || {};
+  const sourceValues = Object.values(sourceGroups).filter(v => Array.isArray(v));
+  const fallbackMainGroups = orderNames.map((name, idx) => {
+    const direct = Array.isArray(sourceGroups?.[name]) ? sourceGroups[name] : null;
+    const byOrder = Array.isArray(sourceValues[idx]) ? sourceValues[idx] : [];
+    const picked = direct && direct.length ? direct : byOrder;
+    return (picked || []).map(n => String(n).padStart(2,'0'));
+  });
   const metrics = bestResult?.groupDetails?.length ? {
     groupDetails: bestResult.groupDetails,
     packStatus: bestResult.packStatus || '不可通報',
@@ -4239,7 +4246,7 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     watchCount: (bestResult.groupDetails || []).filter(g => g.status === '需留意').length,
     highCount: (bestResult.groupDetails || []).filter(g => g.status === '高風險').length
   } : buildCandidatePlanMetrics(fallbackMainGroups, analysis || {});
-  const groupRows = (metrics.groupDetails || []).map((detail, idx)=>{
+  let groupRows = (metrics.groupDetails || []).map((detail, idx)=>{
     const fallbackNums = Array.isArray(fallbackMainGroups[idx]) ? fallbackMainGroups[idx] : [];
     const nums = (Array.isArray(detail.nums) && detail.nums.length ? detail.nums : fallbackNums).map(n=>String(n).padStart(2,'0'));
     return ({
@@ -4253,6 +4260,18 @@ function buildGenerationPreviewState(id, bestResult, analysis){
       tripleHits: Array.isArray(detail.tripleHits) ? detail.tripleHits.length : Number(detail.tripleHits || 0)
     });
   });
+  if(!groupRows.length || groupRows.every(g => !g.nums.length)){
+    groupRows = fallbackMainGroups.map((nums, idx)=>( {
+      idx: idx + 1,
+      nums: (nums || []).map(n=>String(n).padStart(2,'0')),
+      score: 0,
+      status: (bestResult?.canNotify === false ? '需留意' : '可用'),
+      reason: (bestResult?.canNotify === false ? '本輪建議再生' : '分散正常，可保留'),
+      riskyCount: 0,
+      pairHits: 0,
+      tripleHits: 0
+    }));
+  }
   const usableRows = groupRows.filter(g=>g.nums.length);
   const sorted = [...(usableRows.length ? usableRows : groupRows)].sort((a,b)=>a.score-b.score);
   const best = sorted[0] || null;
@@ -4279,7 +4298,7 @@ ${preview.best.reason}` : '尚無';
   if($('generationPreviewRisk')) $('generationPreviewRisk').textContent = preview.worst ? `第${preview.worst.idx}組｜${preview.worst.nums.join('、')}
 ${preview.worst.reason}` : '尚無';
   if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = preview.groups.map(g=>`<div style="padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:14px;margin-top:8px;">`+
-    `<b>第${g.idx}組【${escapeHtml(g.status)}】</b> ${escapeHtml(g.nums.join('、'))}<br>`+
+    `<b>第${g.idx}組【${escapeHtml(g.status)}】</b> ${escapeHtml((g.nums && g.nums.length ? g.nums : ['未帶入號碼']).join('、'))}<br>`+
     `<span class="small">${escapeHtml(g.reason)}${g.riskyCount ? `｜風險號 ${g.riskyCount}` : ''}${g.pairHits ? `｜雙碰 ${g.pairHits}` : ''}${g.tripleHits ? `｜三碰 ${g.tripleHits}` : ''}</span></div>`).join('');
   const confirmBtn = $('generationPreviewConfirm');
   if(confirmBtn){
