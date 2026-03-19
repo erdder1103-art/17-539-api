@@ -110,8 +110,7 @@ function validatePayload(payload) {
 
 function validateManualPayload(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
-  const sourceName = String(payload.sourceName || '').trim();
-  if (!sourceName) throw new Error('請輸入通報名稱');
+  const sourceName = String(payload.sourceName || payload.source || '').trim() || '手動追蹤';
   const title = payload.lotteryTitle || (lotteryType === 'ttl' ? '天天樂' : '539');
   const groups = normalizeGroups(payload.groups || {});
   ensureMainGroupsUnique(groups, '手動');

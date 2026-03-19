@@ -2372,17 +2372,14 @@ function formatEta(ms){
 
   async function submitManualTracking(id){
     const s = state.lotteries[id];
-    const sourceName = ($(`${id}_manualSource`)?.value || '').trim();
+    const manualSourceInput = $(`${id}_manualSource`);
+    const sourceName = String((manualSourceInput?.value ?? manualSourceInput?.getAttribute('value') ?? '')).trim() || '手動追蹤';
     const group1 = parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), s.cfg.maxNum);
     const group2 = parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), s.cfg.maxNum);
     const group3 = parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), s.cfg.maxNum);
     const group4 = parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum);
     const full = parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum);
-    if(!sourceName){
-      showMiniNotice(`${s.cfg.title}：請先輸入通報名稱`, 'warn');
-      return;
-    }
-    const groups = [group1, group2, group3, group4];
+        const groups = [group1, group2, group3, group4];
     if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
       showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼`, 'warn');
       return;
@@ -2845,6 +2842,21 @@ function buildTrackingAnalysisMetaFromGroups(groups, analysis){
   };
 }
 
+function rankPackCandidate(metrics){
+  const severePenalty = metrics.highCount * 1000 + Math.max(0, metrics.watchCount - 2) * 120 + metrics.totalScore;
+  return severePenalty;
+}
+
+function isCandidateBetter(metricsA, metricsB){
+  if(!metricsB) return true;
+  const rankA = rankPackCandidate(metricsA);
+  const rankB = rankPackCandidate(metricsB);
+  if(rankA !== rankB) return rankA < rankB;
+  if(metricsA.highCount !== metricsB.highCount) return metricsA.highCount < metricsB.highCount;
+  if(metricsA.watchCount !== metricsB.watchCount) return metricsA.watchCount < metricsB.watchCount;
+  return metricsA.totalScore < metricsB.totalScore;
+}
+
 function buildCandidatePlanMetrics(mains, analysis){
   const highRiskPairs = new Set(analysis.highRiskPairs || []);
   const highRiskTriples = new Set(analysis.highRiskTriples || []);
@@ -2900,12 +2912,12 @@ function buildCandidatePlanMetrics(mains, analysis){
     detailScores.push(Number(score.toFixed(2)));
     let status = '可用';
     let reason = '分散正常，可保留';
-    if (tripleHitCount > 0 || score >= 13.5 || riskyCount >= 3 || pairHitCount >= 2) {
+    if (tripleHitCount > 0 || pairHitCount >= 2 || score >= 17.5 || (riskyCount >= 4 && (tailPenalty + decadePenalty) >= 2)) {
       status = '高風險';
-      reason = tripleHitCount > 0 ? '命中高風險三碰，整組淘汰' : pairHitCount >= 2 ? '高風險雙碰過多，建議重生' : '風險號過多或分布過擠';
-    } else if (pairHitCount === 1 || score >= 8.6 || riskyCount >= 2 || decadePenalty >= 1 || tailPenalty >= 1) {
+      reason = tripleHitCount > 0 ? '命中高風險三碰，整組淘汰' : pairHitCount >= 2 ? '高風險雙碰過多，建議重生' : '風險集中過高或分布過擠';
+    } else if (pairHitCount === 1 || score >= 10.8 || riskyCount >= 3 || decadePenalty >= 2 || tailPenalty >= 2) {
       status = '需留意';
-      reason = pairHitCount === 1 ? '有 1 組高風險雙碰，通報前建議再生' : '局部集中或風險略高';
+      reason = pairHitCount === 1 ? '有 1 組高風險雙碰，建議再分散' : '局部集中或風險略高';
     } else if (hotCount >= 3 && trendCount === 0) {
       status = '偏熱';
       reason = '熱號偏多，可再觀察';
@@ -2935,8 +2947,8 @@ function buildCandidatePlanMetrics(mains, analysis){
   const highCount = groupDetails.filter(g => g.status === '高風險').length;
   const watchCount = groupDetails.filter(g => g.status === '需留意').length;
   totalScore += hotSpread * 2.3 + highCount * 8.2 + Math.max(0, watchCount - 1) * 2.4;
-  const packStatus = highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報';
-  const canNotify = packStatus === '可通報';
+  const canNotify = highCount === 0 && watchCount <= 2;
+  const packStatus = canNotify ? (watchCount === 0 ? '可通報' : '勉強可用') : '不可通報';
   return {
     totalScore: Number(totalScore.toFixed(2)),
     twoHitRisk,
@@ -2970,7 +2982,7 @@ function buildSimpleGeneratedPlan(id, analysis){
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
   const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-  const candidateCount = 1500;
+  const candidateCount = 2200;
   let qualified = null;
   let fallback = null;
 
@@ -3017,11 +3029,11 @@ function buildSimpleGeneratedPlan(id, analysis){
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
-      twoHitRisk: metrics.twoHitRisk,
-      threeHitRisk: metrics.threeHitRisk,
-      lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
-      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
-      rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
+      twoHitRisk: finalMetrics.twoHitRisk,
+      threeHitRisk: finalMetrics.threeHitRisk,
+      lowRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
+      mediumRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '需留意').length,
+      rejectedGroups: finalMetrics.groupDetails.filter(v => v.status === '高風險').length,
       selectedPool: 'pack-validation-v1135-relaxed',
       downgraded: true,
       hotCounts: metrics.hotCounts,
@@ -3034,6 +3046,58 @@ function buildSimpleGeneratedPlan(id, analysis){
       score: Number(Math.max(40, (92 - metrics.totalScore)).toFixed(1)),
       whyQualified: `已搜尋 ${candidateCount} 套候選，但沒有找到可直接通報方案；以下提供可檢查的備選組合。`
     };
+  }
+
+  function optimizeCandidatePack(seedGroups){
+    let bestGroups = JSON.parse(JSON.stringify(seedGroups));
+    let bestMetrics = buildCandidatePlanMetrics([bestGroups[groupNames[0]], bestGroups[groupNames[1]], bestGroups[groupNames[2]], bestGroups[groupNames[3]]], analysis);
+    for(let round=0; round<12; round++){
+      if(bestMetrics.canNotify) break;
+      const ordered = bestMetrics.groupDetails.slice().sort((a,b)=>{
+        const weight = { '高風險': 3, '需留意': 2, '偏熱': 1, '可用': 0 };
+        const diff = (weight[b.status]||0) - (weight[a.status]||0);
+        if(diff) return diff;
+        return (b.score||0) - (a.score||0);
+      });
+      let mutated = false;
+      for(const detail of ordered.slice(0, 2)){
+        const targetName = groupNames[detail.index - 1];
+        const fixedUsed = new Set();
+        for(let gi=0; gi<4; gi++){
+          const name = groupNames[gi];
+          if(name === targetName) continue;
+          (bestGroups[name] || []).forEach(n=>fixedUsed.add(n));
+        }
+        let bestLocalGroups = null;
+        let bestLocalMetrics = null;
+        for(let localTry=0; localTry<120; localTry++){
+          const localUsed = new Set(Array.from(fixedUsed));
+          const safeMid = shuffle((mid || []).filter(n=>!riskyNumbers.has(n) && !cold.includes(n)));
+          const safeWarm = shuffle((warm || []).filter(n=>!riskyNumbers.has(n)));
+          const safeTrend = shuffle((trendUp || []).filter(n=>!riskyNumbers.has(n)));
+          const safeAll = shuffle(allNums.filter(n=>!localUsed.has(n) && !riskyNumbers.has(n) && !cold.includes(n)));
+          const pools = [safeMid, safeWarm, safeTrend, shuffle(mid), shuffle(warm), safeAll, shuffle(hot).slice(0,3), shuffle(cold).slice(0,2)];
+          const proposed = makeGroupFromPools(5, pools, localUsed, highRiskPairs, highRiskTriples, maxNum);
+          if(proposed.length < 5) continue;
+          const trialGroups = JSON.parse(JSON.stringify(bestGroups));
+          trialGroups[targetName] = proposed;
+          const trialMetrics = buildCandidatePlanMetrics([trialGroups[groupNames[0]], trialGroups[groupNames[1]], trialGroups[groupNames[2]], trialGroups[groupNames[3]]], analysis);
+          if(isCandidateBetter(trialMetrics, bestLocalMetrics)){
+            bestLocalMetrics = trialMetrics;
+            bestLocalGroups = trialGroups;
+            if(trialMetrics.canNotify) break;
+          }
+        }
+        if(bestLocalGroups && isCandidateBetter(bestLocalMetrics, bestMetrics)){
+          bestGroups = bestLocalGroups;
+          bestMetrics = bestLocalMetrics;
+          mutated = true;
+        }
+        if(bestMetrics.canNotify) break;
+      }
+      if(!mutated) break;
+    }
+    return { groups: bestGroups, metrics: bestMetrics };
   }
 
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
@@ -3049,7 +3113,7 @@ function buildSimpleGeneratedPlan(id, analysis){
         const metrics = buildCandidatePlanMetrics([proposed], analysis);
         const detail = metrics.groupDetails[0];
         if(!attemptBest || detail.score < attemptBest.detail.score){ attemptBest = { proposed, localUsed, detail }; }
-        if(detail.status === '可用' || detail.status === '偏熱') break;
+        if(detail.status === '可用' || detail.status === '偏熱' || (detail.status === '需留意' && detail.score < 9.4)) break;
       }
       if(!attemptBest || !attemptBest.proposed || !attemptBest.proposed.length){ valid = false; break; }
       groups[groupNames[gi]] = attemptBest.proposed;
@@ -3065,31 +3129,38 @@ function buildSimpleGeneratedPlan(id, analysis){
     groups[groupNames[4]] = full.sort((a,b)=>parseInt(a,10)-parseInt(b,10));
     const mains = [groups[groupNames[0]], groups[groupNames[1]], groups[groupNames[2]], groups[groupNames[3]]];
     const metrics = buildCandidatePlanMetrics(mains, analysis);
+    const optimized = optimizeCandidatePack(groups);
+    const finalGroups = optimized.groups;
+    const finalMetrics = optimized.metrics;
+    groups[groupNames[0]] = finalGroups[groupNames[0]];
+    groups[groupNames[1]] = finalGroups[groupNames[1]];
+    groups[groupNames[2]] = finalGroups[groupNames[2]];
+    groups[groupNames[3]] = finalGroups[groupNames[3]];
     const candidate = {
       groups,
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
-      twoHitRisk: metrics.twoHitRisk,
-      threeHitRisk: metrics.threeHitRisk,
-      lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
-      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
-      rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
+      twoHitRisk: finalMetrics.twoHitRisk,
+      threeHitRisk: finalMetrics.threeHitRisk,
+      lowRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
+      mediumRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '需留意').length,
+      rejectedGroups: finalMetrics.groupDetails.filter(v => v.status === '高風險').length,
       selectedPool: 'pack-validation-v1135',
       downgraded: !metrics.canNotify,
-      hotCounts: metrics.hotCounts,
-      candidateTotalScore: metrics.totalScore,
-      detailScores: metrics.detailScores,
-      packStatus: metrics.packStatus,
-      canNotify: metrics.canNotify,
-      groupDetails: metrics.groupDetails,
-      noQualifiedResult: !metrics.canNotify,
-      score: Number(Math.max(46, (98 - metrics.totalScore)).toFixed(1)),
-      whyQualified: metrics.canNotify
-        ? `已從 ${candidateCount} 套候選中挑出四組都過線的方案；需留意 ${metrics.watchCount} 組，高風險 ${metrics.highCount} 組。`
-        : `已搜尋 ${candidateCount} 套候選，但本輪沒有找到四組都過線的方案；目前僅保留最低風險備選。`
+      hotCounts: finalMetrics.hotCounts,
+      candidateTotalScore: finalMetrics.totalScore,
+      detailScores: finalMetrics.detailScores,
+      packStatus: finalMetrics.packStatus,
+      canNotify: finalMetrics.canNotify,
+      groupDetails: finalMetrics.groupDetails,
+      noQualifiedResult: !finalMetrics.canNotify,
+      score: Number(Math.max(52, (99 - finalMetrics.totalScore)).toFixed(1)),
+      whyQualified: finalMetrics.canNotify
+        ? `已從 ${candidateCount} 套候選中挑出四組可用且風險已分散的方案；需留意 ${finalMetrics.watchCount} 組，高風險 ${finalMetrics.highCount} 組。`
+        : `已搜尋 ${candidateCount} 套候選，但本輪沒有找到四組都過線的方案；系統已自動重整爆雷組後仍未過線。`
     };
-    if(metrics.canNotify){
+    if(finalMetrics.canNotify){
       if(!qualified || candidate.candidateTotalScore < qualified.candidateTotalScore) qualified = candidate;
     } else if(!fallback || candidate.candidateTotalScore < fallback.candidateTotalScore) {
       fallback = candidate;
