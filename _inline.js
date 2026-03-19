@@ -873,6 +873,21 @@ function cleanupNumbers(arr, maxNum){
     throw lastErr || new Error('API 寫入失敗');
   }
 
+
+
+  function readFileAsDataUrl(file){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      reader.onload = ()=>resolve(String(reader.result || ''));
+      reader.onerror = ()=>reject(new Error('附件讀取失敗'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function splitChatIdsInput(value){
+    return String(value || '').split(/[\n,;]+/).map(v=>String(v||'').trim()).filter(Boolean);
+  }
+
   async function fetchJson(url){
     const urls = Array.isArray(url) ? url : [url];
     let lastErr = null;
@@ -1781,11 +1796,13 @@ function formatEta(ms){
   }
 
   function syncTaskCenterFabState(){
-    const fab = $('taskCenterFab');
     const wrap = $('toastWrap');
-    if(!fab || !wrap) return;
+    if(!wrap) return;
     const hasToast = wrap.children.length > 0;
-    fab.classList.toggle('fabCompact', hasToast);
+    const taskFab = $('taskCenterFab');
+    const broadcastFab = $('broadcastFab');
+    if(taskFab) taskFab.classList.toggle('fabCompact', hasToast);
+    if(broadcastFab) broadcastFab.classList.toggle('fabCompact', hasToast);
   }
 
   function showMiniNotice(msg, type = "info"){
@@ -3114,6 +3131,16 @@ function ensureTaskCenterUI(){
   fab.addEventListener('click', openTaskCenter);
   document.body.appendChild(fab);
 
+  const broadcastFab = document.createElement('button');
+  broadcastFab.id = 'broadcastFab';
+  broadcastFab.className = 'green';
+  broadcastFab.type = 'button';
+  broadcastFab.innerHTML = '<span aria-hidden="true">📣</span><span>手動通報</span>';
+  broadcastFab.setAttribute('aria-label','手動通報');
+  broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(156px, calc(env(safe-area-inset-bottom, 0px) + 156px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
+  broadcastFab.addEventListener('click', openBroadcastCenter);
+  document.body.appendChild(broadcastFab);
+
   const modal = document.createElement('div');
   modal.id = 'taskCenterModal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10030;backdrop-filter:blur(2px)';
@@ -3163,6 +3190,56 @@ function ensureTaskCenterUI(){
       </div>
     </div>`;
   document.body.appendChild(modal);
+
+  const broadcastModal = document.createElement('div');
+  broadcastModal.id = 'broadcastModal';
+  broadcastModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10031;backdrop-filter:blur(2px)';
+  broadcastModal.innerHTML = `
+    <div style="width:min(980px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(160,77,255,.24);background:linear-gradient(180deg, rgba(52,21,92,.98), rgba(17,8,32,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:24px;font-weight:900;color:#f0d9ff;">Telegram 手動通報</div>
+          <div class="small" style="margin-top:4px;">可直接輸入內容後送出，並支援圖片、影片或一般檔案。</div>
+        </div>
+        <div class="btns" style="margin-top:0;">
+          <button type="button" class="secondary" id="broadcastPreviewBtn">更新預覽</button>
+          <button type="button" class="secondary" id="broadcastClose">關閉</button>
+        </div>
+      </div>
+      <div class="analysisWrap" style="margin-top:14px;grid-template-columns:1.1fr .9fr;">
+        <div class="analysisPanel">
+          <div class="analysisTitle">發送內容</div>
+          <div><label class="small">文字內容</label><textarea id="broadcastText" rows="10" placeholder="輸入要由機器人發送的內容"></textarea></div>
+          <div style="margin-top:10px;">
+            <label class="small">附件（圖片 / 影片 / 檔案）</label>
+            <input type="file" id="broadcastFile" accept="image/*,video/*,.pdf,.zip,.xlsx,.xls,.doc,.docx,.ppt,.pptx,.txt,.csv,.mp4,.mov">
+            <div id="broadcastFileMeta" class="small">尚未選擇附件</div>
+          </div>
+        </div>
+        <div class="analysisPanel">
+          <div class="analysisTitle">發送對象</div>
+          <div id="broadcastTargetModeRow">
+            <button type="button" class="broadcast-pill active" data-mode="all" id="broadcastModeAll">發送給大家</button>
+            <button type="button" class="broadcast-pill" data-mode="custom" id="broadcastModeCustom">個別對象</button>
+          </div>
+          <div class="small" style="margin-top:8px;line-height:1.7;">發送給大家：使用伺服器目前設定的 TG_CHAT_ID。若 TG_CHAT_ID 內有多個 chat_id（可用逗號或換行分隔），會一次全部發送。</div>
+          <div id="broadcastCustomWrap" style="display:none;margin-top:10px;">
+            <label class="small">個別 chat_id（可輸入多個，逗號或換行分隔）</label>
+            <textarea id="broadcastChatIds" rows="5" placeholder="例如：-1001234567890
+123456789"></textarea>
+          </div>
+          <div class="analysisTitle" style="margin-top:14px;">預覽</div>
+          <div id="broadcastPreviewBox" class="small">尚未輸入內容</div>
+        </div>
+      </div>
+      <div class="btns">
+        <button type="button" class="green" id="broadcastSendBtn">通報 = 直接發送</button>
+        <button type="button" class="secondary" id="broadcastClearBtn">清空</button>
+      </div>
+    </div>`;
+  document.body.appendChild(broadcastModal);
+  broadcastModal.addEventListener('click', (e)=>{ if(e.target === broadcastModal) closeBroadcastCenter(); });
+
   $('taskCenterClose').addEventListener('click', closeTaskCenter);
   $('taskCenterRefresh').addEventListener('click', renderTaskQueueBoard);
   $('taskCreateBtn').addEventListener('click', ()=>createTaskFromCenter(false));
@@ -3333,6 +3410,98 @@ function renderTaskQueueBoard(){
   }).join('');
 }
 
+
+function getBroadcastState(){
+  state.broadcast = state.broadcast || { mode:'all', file:null };
+  return state.broadcast;
+}
+
+function setBroadcastMode(mode){
+  const s = getBroadcastState();
+  s.mode = mode === 'custom' ? 'custom' : 'all';
+  ['broadcastModeAll','broadcastModeCustom'].forEach(id=>{ const btn=$(id); if(btn) btn.classList.toggle('active', btn.dataset.mode===s.mode); });
+  if($('broadcastCustomWrap')) $('broadcastCustomWrap').style.display = s.mode === 'custom' ? 'block' : 'none';
+  renderBroadcastPreview();
+}
+
+function openBroadcastCenter(){
+  ensureTaskCenterUI();
+  if($('broadcastModal')) $('broadcastModal').style.display = 'flex';
+  setBroadcastMode(getBroadcastState().mode || 'all');
+  renderBroadcastPreview();
+}
+
+function closeBroadcastCenter(){
+  if($('broadcastModal')) $('broadcastModal').style.display = 'none';
+}
+
+function updateBroadcastFileMeta(){
+  const meta = $('broadcastFileMeta');
+  const file = getBroadcastState().file;
+  if(!meta) return;
+  if(!file){ meta.textContent = '尚未選擇附件'; return; }
+  const kb = file.size ? `${(file.size/1024/1024).toFixed(file.size > 1024*1024 ? 2 : 1)} MB` : '未知大小';
+  meta.textContent = `已選擇：${file.name || '附件'}｜${file.type || '未知格式'}｜${kb}`;
+}
+
+function renderBroadcastPreview(){
+  const box = $('broadcastPreviewBox');
+  if(!box) return;
+  const text = ($('broadcastText')?.value || '').trim();
+  const file = getBroadcastState().file;
+  const mode = getBroadcastState().mode || 'all';
+  const targets = mode === 'all' ? '發送給大家（TG_CHAT_ID）' : `個別對象：${splitChatIdsInput($('broadcastChatIds')?.value || '').join('、') || '尚未輸入'}`;
+  box.textContent = `${targets}
+
+${text || '（尚未輸入文字內容）'}${file ? `
+
+附件：${file.name}` : ''}`;
+  updateBroadcastFileMeta();
+}
+
+async function onBroadcastFileChange(ev){
+  const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
+  const s = getBroadcastState();
+  if(!file){ s.file = null; renderBroadcastPreview(); return; }
+  try{
+    if(file.size > 18 * 1024 * 1024){ throw new Error('附件請控制在 18MB 內'); }
+    const dataUrl = await readFileAsDataUrl(file);
+    s.file = { name:file.name, type:file.type || 'application/octet-stream', size:file.size, dataUrl };
+    renderBroadcastPreview();
+    showMiniNotice('附件已載入，可直接通報', 'ok');
+  }catch(err){
+    s.file = null;
+    if($('broadcastFile')) $('broadcastFile').value = '';
+    renderBroadcastPreview();
+    showMiniNotice(`附件讀取失敗：${err.message || '未知錯誤'}`, 'warn');
+  }
+}
+
+async function sendManualBroadcast(){
+  try{
+    const text = ($('broadcastText')?.value || '').trim();
+    const s = getBroadcastState();
+    const chatIds = ($('broadcastChatIds')?.value || '').trim();
+    if(!text && !(s.file && s.file.dataUrl)) throw new Error('請輸入文字內容或上傳附件');
+    if(s.mode === 'custom' && !splitChatIdsInput(chatIds).length) throw new Error('請輸入至少一個個別 chat_id');
+    showMiniNotice('Telegram 通報發送中…', 'info');
+    const result = await postJsonApi('/api/telegram/broadcast', { text, targetMode:s.mode, chatIds, file:s.file || null });
+    showMiniNotice(result.message || 'Telegram 已送出', 'ok');
+  }catch(err){
+    showMiniNotice(`Telegram 發送失敗：${err.message || '未知錯誤'}`, 'warn');
+  }
+}
+
+function clearBroadcastForm(){
+  const s = getBroadcastState();
+  s.file = null; s.mode = 'all';
+  if($('broadcastText')) $('broadcastText').value = '';
+  if($('broadcastChatIds')) $('broadcastChatIds').value = '';
+  if($('broadcastFile')) $('broadcastFile').value = '';
+  setBroadcastMode('all');
+  renderBroadcastPreview();
+}
+
   async function init(){
     mountLotteries();
     setTaipeiClock();
@@ -3345,6 +3514,14 @@ function renderTaskQueueBoard(){
     window.__taskRun = (taskId) => executeTaskById(taskId);
     window.__taskRemove = (taskId) => removeTaskById(taskId);
     window.__taskClone = (taskId) => rerunTaskById(taskId);
+    ['broadcastModeAll','broadcastModeCustom'].forEach(id=>$(id)?.addEventListener('click', ()=>setBroadcastMode($(id).dataset.mode)));
+    $('broadcastClose')?.addEventListener('click', closeBroadcastCenter);
+    $('broadcastPreviewBtn')?.addEventListener('click', renderBroadcastPreview);
+    $('broadcastSendBtn')?.addEventListener('click', sendManualBroadcast);
+    $('broadcastClearBtn')?.addEventListener('click', clearBroadcastForm);
+    $('broadcastText')?.addEventListener('input', renderBroadcastPreview);
+    $('broadcastChatIds')?.addEventListener('input', renderBroadcastPreview);
+    $('broadcastFile')?.addEventListener('change', onBroadcastFileChange);
 
     await initLottery("ttl", restored);
     await initLottery("l539", restored);
