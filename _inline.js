@@ -1804,14 +1804,14 @@ function formatEta(ms){
     const taskFab = $('taskCenterFab');
     const broadcastFab = $('broadcastFab');
     if(taskFab){
-      taskFab.classList.toggle('fabCompact', hasToast);
-      taskFab.style.transform = hasToast ? 'scale(.94)' : 'scale(1)';
-      taskFab.style.bottom = hasToast ? 'max(32px, calc(env(safe-area-inset-bottom, 0px) + 32px))' : 'max(24px, calc(env(safe-area-inset-bottom, 0px) + 24px))';
+      taskFab.classList.remove('fabCompact');
+      taskFab.style.transform = 'scale(1)';
+      taskFab.style.bottom = 'max(24px, calc(env(safe-area-inset-bottom, 0px) + 24px))';
     }
     if(broadcastFab){
-      broadcastFab.classList.toggle('fabCompact', hasToast);
-      broadcastFab.style.transform = hasToast ? 'scale(.92)' : 'scale(1)';
-      broadcastFab.style.bottom = hasToast ? 'max(122px, calc(env(safe-area-inset-bottom, 0px) + 122px))' : 'max(108px, calc(env(safe-area-inset-bottom, 0px) + 108px))';
+      broadcastFab.classList.remove('fabCompact');
+      broadcastFab.style.transform = 'scale(1)';
+      broadcastFab.style.bottom = 'max(96px, calc(env(safe-area-inset-bottom, 0px) + 96px))';
     }
   }
 
@@ -2982,6 +2982,60 @@ function buildSimpleGeneratedPlan(id, analysis){
     return [shuffle(mid), shuffle(warm), shuffle(mid), shuffle(trendUp), shuffle(hot).slice(0,4), shuffle(cold).slice(0,3)];
   }
 
+
+
+  function buildRelaxedFallbackCandidate(){
+    const used = new Set();
+    const groups = {};
+    for(let gi=0; gi<4; gi++){
+      let bestLocal = null;
+      for(let localTry=0; localTry<36; localTry++){
+        const localUsed = new Set(Array.from(used));
+        const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
+        if(proposed.length < 5) continue;
+        const metrics = buildCandidatePlanMetrics([proposed], analysis);
+        const detail = metrics.groupDetails[0];
+        if(!bestLocal || detail.score < bestLocal.detail.score) bestLocal = { proposed, localUsed, detail };
+      }
+      if(!bestLocal){
+        const spare = allNums.filter(n => !used.has(n));
+        bestLocal = { proposed: spare.slice(0,5), localUsed: new Set([...used, ...spare.slice(0,5)]), detail: { score: 99 } };
+      }
+      groups[groupNames[gi]] = (bestLocal.proposed || []).slice().sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+      used.clear();
+      Array.from(bestLocal.localUsed || []).forEach(v=>used.add(v));
+    }
+    const preferredFull = shuffle(allNums.filter(n => !used.has(n) && !riskyNumbers.has(n) && !cold.includes(n)));
+    const backupFull = shuffle(allNums.filter(n => !used.has(n) && !preferredFull.includes(n)));
+    const full = [];
+    for(const n of [...preferredFull, ...backupFull]){ if(full.length >= 19) break; full.push(n); }
+    groups[groupNames[4]] = full.sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+    const mains = [groups[groupNames[0]], groups[groupNames[1]], groups[groupNames[2]], groups[groupNames[3]]];
+    const metrics = buildCandidatePlanMetrics(mains, analysis);
+    return {
+      groups,
+      searchedCandidates: candidateCount,
+      analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
+      elapsedMs: 0,
+      twoHitRisk: metrics.twoHitRisk,
+      threeHitRisk: metrics.threeHitRisk,
+      lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
+      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
+      rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
+      selectedPool: 'pack-validation-v1135-relaxed',
+      downgraded: true,
+      hotCounts: metrics.hotCounts,
+      candidateTotalScore: metrics.totalScore,
+      detailScores: metrics.detailScores,
+      packStatus: metrics.packStatus,
+      canNotify: false,
+      groupDetails: metrics.groupDetails,
+      noQualifiedResult: true,
+      score: Number(Math.max(40, (92 - metrics.totalScore)).toFixed(1)),
+      whyQualified: `已搜尋 ${candidateCount} 套候選，但沒有找到可直接通報方案；以下提供可檢查的備選組合。`
+    };
+  }
+
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
     const used = new Set();
     const groups = {};
@@ -3041,17 +3095,7 @@ function buildSimpleGeneratedPlan(id, analysis){
       fallback = candidate;
     }
   }
-  return qualified || fallback || {
-    groups: {}, score: 0, searchedCandidates: candidateCount,
-    analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
-    elapsedMs: 0, twoHitRisk: 0, threeHitRisk: 0,
-    lowRiskGroups: 0, mediumRiskGroups: 0, rejectedGroups: 4,
-    selectedPool: 'pack-validation-v1135', downgraded: true,
-    hotCounts: [0,0,0,0], candidateTotalScore: 999,
-    detailScores: [99,99,99,99], packStatus: '不可通報', canNotify: false,
-    groupDetails: [], noQualifiedResult: true,
-    whyQualified: `已搜尋 ${candidateCount} 套候選，但本輪沒有找到可用方案。`
-  };
+  return qualified || fallback || buildRelaxedFallbackCandidate();
 }
 
 function bindEvents(id){
@@ -3569,7 +3613,14 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     $(`${id}_prize3Desc`).value.trim() || '第三組',
     $(`${id}_prize4Desc`).value.trim() || '第四組'
   ];
-  const fallbackMainGroups = orderNames.map(name => Array.isArray(bestResult?.groups?.[name]) ? bestResult.groups[name] : []);
+  const rawGroups = bestResult?.groups || {};
+  const allGroupValues = Object.values(rawGroups).filter(v => Array.isArray(v));
+  const fallbackMainGroups = orderNames.map((name, idx) => {
+    if (Array.isArray(rawGroups[name]) && rawGroups[name].length) return rawGroups[name];
+    if (Array.isArray(rawGroups[`group${idx + 1}`]) && rawGroups[`group${idx + 1}`].length) return rawGroups[`group${idx + 1}`];
+    const positional = allGroupValues[idx];
+    return Array.isArray(positional) ? positional : [];
+  });
   const metrics = bestResult?.groupDetails?.length ? {
     groupDetails: bestResult.groupDetails,
     packStatus: bestResult.packStatus || '不可通報',
@@ -3595,13 +3646,20 @@ function buildGenerationPreviewState(id, bestResult, analysis){
   const sorted = [...(usableRows.length ? usableRows : groupRows)].sort((a,b)=>a.score-b.score);
   const best = sorted[0] || null;
   const worst = sorted[sorted.length-1] || null;
+  const hasAnyNumbers = groupRows.some(g => Array.isArray(g.nums) && g.nums.length);
   const highCount = metrics.highCount ?? groupRows.filter(g=>g.status==='高風險').length;
   const watchCount = metrics.watchCount ?? groupRows.filter(g=>g.status==='需留意').length;
   let summary = '四組已通過驗收，可直接通報。';
-  if (highCount > 0) summary = `本輪不通報：有 ${highCount} 組超過風險線，請直接重新生成。`;
+  let canNotify = !!metrics.canNotify;
+  let packStatus = metrics.packStatus || (highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報');
+  if (!hasAnyNumbers || bestResult?.noQualifiedResult) {
+    summary = '本輪沒有找到可直接通報方案，請查看備選組合後重新生成。';
+    canNotify = false;
+    packStatus = '不可通報';
+  } else if (highCount > 0) summary = `本輪不通報：有 ${highCount} 組超過風險線，請直接重新生成。`;
   else if (watchCount > 1) summary = `本輪偏髒：有 ${watchCount} 組需留意，建議再生一次。`;
   else if (watchCount === 1) summary = '本輪可用，但有 1 組需留意。';
-  return { summary, best, worst, groups: groupRows, canNotify: !!metrics.canNotify, packStatus: metrics.packStatus || (highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報') };
+  return { summary, best, worst, groups: groupRows, canNotify, packStatus };
 }
 
 function openGenerationPreview(id, bestResult, analysis){
