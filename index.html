@@ -1962,7 +1962,7 @@ function cleanupNumbers(arr, maxNum){
     const target = 1;
     if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布直接生成方案。` });
     await sleep(30);
-    const best = buildSimpleGeneratedPlan(id, analysis);
+    const best = await buildSimpleGeneratedPlan(id, analysis, onProgress);
     const elapsedMs = Date.now() - startedAt;
     if (typeof onProgress === 'function') onProgress({ searched: 1, target, elapsedMs, lowRiskFound: 1, stageLabel: '完成生成', statusText: '生成完成', footerText: best.whyQualified || '已完成可用方案生成。' });
     return Object.assign({}, best, { searchedCandidates: 1, generatedTryCount: 1, elapsedMs, noQualifiedResult: false });
@@ -3038,27 +3038,40 @@ function formatEta(ms){
     const s = state.lotteries[id];
     const manualSourceInput = $(`${id}_manualSource`);
     const sourceName = String((manualSourceInput?.value ?? manualSourceInput?.getAttribute('value') ?? '')).trim() || '手動追蹤';
-    const group1 = parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), s.cfg.maxNum);
-    const group2 = parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), s.cfg.maxNum);
-    const group3 = parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), s.cfg.maxNum);
-    const group4 = parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum);
-    const full = parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum);
-        const groups = [group1, group2, group3, group4];
+    const parsed = {
+      group1: parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), s.cfg.maxNum),
+      group2: parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), s.cfg.maxNum),
+      group3: parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), s.cfg.maxNum),
+      group4: parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum),
+      full: parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum)
+    };
+    const fallback = getCurrentPlanGroupsForManual(id) || {};
+    const normalizedGroups = {
+      group1: parsed.group1.length === 5 ? parsed.group1 : (Array.isArray(fallback.group1) && fallback.group1.length === 5 ? fallback.group1 : parsed.group1),
+      group2: parsed.group2.length === 5 ? parsed.group2 : (Array.isArray(fallback.group2) && fallback.group2.length === 5 ? fallback.group2 : parsed.group2),
+      group3: parsed.group3.length === 5 ? parsed.group3 : (Array.isArray(fallback.group3) && fallback.group3.length === 5 ? fallback.group3 : parsed.group3),
+      group4: parsed.group4.length === 5 ? parsed.group4 : (Array.isArray(fallback.group4) && fallback.group4.length === 5 ? fallback.group4 : parsed.group4),
+      full: parsed.full.length === 19 ? parsed.full : (Array.isArray(fallback.full) && fallback.full.length === 19 ? fallback.full : parsed.full)
+    };
+    [['manualGroup1', normalizedGroups.group1], ['manualGroup2', normalizedGroups.group2], ['manualGroup3', normalizedGroups.group3], ['manualGroup4', normalizedGroups.group4], ['manualFull', normalizedGroups.full]].forEach(([field, vals])=>{
+      const input = $(`${id}_${field}`);
+      if(input && Array.isArray(vals) && vals.length) input.value = vals.join(' ');
+    });
+    const groups = [normalizedGroups.group1, normalizedGroups.group2, normalizedGroups.group3, normalizedGroups.group4];
+    const sizes = groups.map(g => Array.isArray(g) ? g.length : 0);
     if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
-      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼`, 'warn');
+      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼（目前 ${sizes.join('/')}）`, 'warn');
       return;
     }
-    const merged = groups.flat();
-    if(new Set(merged).size !== merged.length){
+    if(new Set(groups.flat()).size !== groups.flat().length){
       showMiniNotice(`${s.cfg.title}：手動第一組到第四組之間不可重複`, 'warn');
       return;
     }
-    if(full.length !== 19 || new Set(full).size !== 19){
-      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼`, 'warn');
+    if(normalizedGroups.full.length !== 19 || new Set(normalizedGroups.full).size !== 19){
+      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼（目前 ${normalizedGroups.full.length} 顆）`, 'warn');
       return;
     }
     try{
-      const normalizedGroups = { group1, group2, group3, group4, full };
       const result = await postJsonApi('/api/manual-tracking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3071,19 +3084,38 @@ function formatEta(ms){
           analysis: buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null)
         })
       });
-      if(!result?.ok) throw new Error(result?.message || '手動追蹤失敗');
-      const fullCount = result?.validation?.groupSizes?.full || full.length;
-      showMiniNotice(`${s.cfg.title}：${result.message || '已新增手動追蹤'}（全車 ${fullCount} 顆）`, 'ok');
-      ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
-        if($(`${id}_${key}`)) $(`${id}_${key}`).value = '';
-      });
+  function parseManualGroupInput(value, maxNum){
+    const matches = String(value || '').match(/\d{1,2}/g) || [];
+    return matches
+      .map(n => parseInt(n,10))
+      .filter(n => Number.isInteger(n) && n >= 1 && n <= maxNum)
+      .map(n => String(n).padStart(2,'0'));
+  }
+
+function getCurrentPlanGroupsForManual(id){
+  const s = state.lotteries[id] || {};
+  const plan = s.generatedGroups && s.generatedGroups.groups ? s.generatedGroups.groups : null;
+  if(!plan) return null;
+  const names = [
+    $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
+    $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
+    $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
+    $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
+    $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
+  ];
+  return {
+    group1: Array.isArray(plan[names[0]]) ? plan[names[0]] : [],
+    group2: Array.isArray(plan[names[1]]) ? plan[names[1]] : [],
+    group3: Array.isArray(plan[names[2]]) ? plan[names[2]] : [],
+    group4: Array.isArray(plan[names[3]]) ? plan[names[3]] : [],
+    full: Array.isArray(plan[names[4]]) ? plan[names[4]] : []
+  };
+}
       await refreshTrackingBoard(id, { silent: true });
     }catch(err){
       showMiniNotice(`${s.cfg.title}：手動追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }
   }
-
-  
   function parseManualGroupInput(value, maxNum){
     return cleanupInput(String(value || '').split(/[^\d]+/), 'digits')
       .map(n => parseInt(n,10))
@@ -3167,7 +3199,7 @@ function clearManualFields(id){
   });
 }
 
-function autoFillManualTracking(id){
+async function autoFillManualTracking(id){
   const s = state.lotteries[id];
   const historyText = getEls(id).historyInput.value.trim();
   if(!historyText){
@@ -3177,13 +3209,13 @@ function autoFillManualTracking(id){
   const analysis = s.historyAnalysis || analyzeHistoryText(id, historyText);
   s.historyAnalysis = analysis;
   renderHistoryAnalysis(id, analysis);
-  const plan = buildSimpleGeneratedPlan(id, analysis);
+  const plan = await buildSimpleGeneratedPlan(id, analysis);
   fillManualFieldsFromPlan(id, plan.groups);
   persistAll();
   showMiniNotice(`${s.cfg.title}：已一鍵帶入第一組到第四組與全車號碼`, 'ok');
 }
 
-function autoGenerateToLog(id){
+async function autoGenerateToLog(id){
   const s = state.lotteries[id];
   const historyText = getEls(id).historyInput.value.trim();
   if(!historyText){
@@ -3193,7 +3225,7 @@ function autoGenerateToLog(id){
   const analysis = s.historyAnalysis || analyzeHistoryText(id, historyText);
   s.historyAnalysis = analysis;
   renderHistoryAnalysis(id, analysis);
-  const plan = buildSimpleGeneratedPlan(id, analysis);
+  const plan = await buildSimpleGeneratedPlan(id, analysis);
   s.generatedGroups = plan;
   renderGroupPreview(id, plan);
   applyGeneratedGroupsToLog(id, plan.groups);
@@ -3628,7 +3660,7 @@ function buildCandidatePlanMetrics(mains, analysis){
   };
 }
 
-function buildSimpleGeneratedPlan(id, analysis){
+async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   const hot = (analysis.hot || []).slice(0, 8);
   const warm = (analysis.warm || []).slice(0, 14);
   const cold = (analysis.cold || []).slice(0, 8);
@@ -3646,7 +3678,7 @@ function buildSimpleGeneratedPlan(id, analysis){
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
   const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
-  const candidateCount = 2200;
+  const candidateCount = 220;
   let qualified = null;
   let fallback = null;
 
@@ -3665,7 +3697,7 @@ function buildSimpleGeneratedPlan(id, analysis){
     const groups = {};
     for(let gi=0; gi<4; gi++){
       let bestLocal = null;
-      for(let localTry=0; localTry<36; localTry++){
+      for(let localTry=0; localTry<10; localTry++){
         const localUsed = new Set(Array.from(used));
         const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
         if(proposed.length < 5) continue;
@@ -3693,11 +3725,11 @@ function buildSimpleGeneratedPlan(id, analysis){
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
-      twoHitRisk: finalMetrics.twoHitRisk,
-      threeHitRisk: finalMetrics.threeHitRisk,
-      lowRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
-      mediumRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '需留意').length,
-      rejectedGroups: finalMetrics.groupDetails.filter(v => v.status === '高風險').length,
+      twoHitRisk: metrics.twoHitRisk,
+      threeHitRisk: metrics.threeHitRisk,
+      lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
+      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
+      rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
       selectedPool: 'pack-validation-v1135-relaxed',
       downgraded: true,
       hotCounts: metrics.hotCounts,
@@ -3715,7 +3747,7 @@ function buildSimpleGeneratedPlan(id, analysis){
   function optimizeCandidatePack(seedGroups){
     let bestGroups = JSON.parse(JSON.stringify(seedGroups));
     let bestMetrics = buildCandidatePlanMetrics([bestGroups[groupNames[0]], bestGroups[groupNames[1]], bestGroups[groupNames[2]], bestGroups[groupNames[3]]], analysis);
-    for(let round=0; round<12; round++){
+    for(let round=0; round<4; round++){
       if(bestMetrics.canNotify) break;
       const ordered = bestMetrics.groupDetails.slice().sort((a,b)=>{
         const weight = { '高風險': 3, '需留意': 2, '偏熱': 1, '可用': 0 };
@@ -3734,7 +3766,7 @@ function buildSimpleGeneratedPlan(id, analysis){
         }
         let bestLocalGroups = null;
         let bestLocalMetrics = null;
-        for(let localTry=0; localTry<120; localTry++){
+        for(let localTry=0; localTry<6; localTry++){
           const localUsed = new Set(Array.from(fixedUsed));
           const safeMid = shuffle((mid || []).filter(n=>!riskyNumbers.has(n) && !cold.includes(n)));
           const safeWarm = shuffle((warm || []).filter(n=>!riskyNumbers.has(n)));
@@ -3765,12 +3797,16 @@ function buildSimpleGeneratedPlan(id, analysis){
   }
 
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
+    if(candidateIndex % 20 === 0){
+      if(typeof onProgress === "function") onProgress({ searched: candidateIndex, target: candidateCount, elapsedMs: candidateIndex * 6, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: "生成中", footerText: "系統正在分批尋找較乾淨的候選方案…" });
+      await sleep(0);
+    }
     const used = new Set();
     const groups = {};
     let valid = true;
     for(let gi=0; gi<4; gi++){
       let attemptBest = null;
-      for(let localTry=0; localTry<18; localTry++){
+      for(let localTry=0; localTry<6; localTry++){
         const localUsed = new Set(Array.from(used));
         const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
         if(proposed.length < 5) continue;
@@ -3805,11 +3841,11 @@ function buildSimpleGeneratedPlan(id, analysis){
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
-      twoHitRisk: finalMetrics.twoHitRisk,
-      threeHitRisk: finalMetrics.threeHitRisk,
-      lowRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
-      mediumRiskGroups: finalMetrics.groupDetails.filter(v => v.status === '需留意').length,
-      rejectedGroups: finalMetrics.groupDetails.filter(v => v.status === '高風險').length,
+      twoHitRisk: metrics.twoHitRisk,
+      threeHitRisk: metrics.threeHitRisk,
+      lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
+      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
+      rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
       selectedPool: 'pack-validation-v1135',
       downgraded: !metrics.canNotify,
       hotCounts: finalMetrics.hotCounts,
@@ -3887,7 +3923,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在分析${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布。` });
   await sleep(120);
   try {
-    const bestResult = buildSimpleGeneratedPlan(id, analysis);
+    const bestResult = await buildSmartGroups(id, analysis, (p)=>updateSearchOverlay(id, p));
     state.lotteries[id].generatedGroups = bestResult;
     await lockSearchResult(id, bestResult);
     renderGroupPreview(id, bestResult);
@@ -4557,7 +4593,6 @@ function clearBroadcastForm(){
 
   init();
 })();
-
-  </script>
+</script>
 </body>
 </html>
