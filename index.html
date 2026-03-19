@@ -511,7 +511,7 @@
     .toast.warn{border-color:rgba(255,179,71,.42)}
     .toast.info{border-color:rgba(120,200,255,.42)}
     #taskCenterFab.fabCompact{padding:12px 13px !important;transform:translateY(-58px) scale(.9);opacity:.94}
-    #taskCenterFab.fabCompact span:last-child{display:none}
+    #taskCenterFab{display:flex;align-items:center;gap:8px}#taskCenterFab.fabCompact span:last-child{display:none}
     @keyframes toastIn{
       to{opacity:1; transform:translateY(0)}
     }
@@ -2731,6 +2731,18 @@ function formatEta(ms){
     }
   }
 
+  async function recalculateTrackingItem(id, trackingId){
+    const title = state.lotteries[id].cfg.title;
+    try{
+      const result = await postJsonApi('/api/tracking/recalculate', { lotteryType: id === 'ttl' ? 'ttl' : '539', trackingId });
+      if(!result?.ok) throw new Error(result?.message || '重算分析失敗');
+      showMiniNotice(`${title}：${result.message || '已補上分析'}`, 'ok');
+      await refreshTrackingBoard(id, { silent: true });
+    }catch(err){
+      showMiniNotice(`${title}：重算分析失敗：${err.message || '未知錯誤'}`, 'warn');
+    }
+  }
+
   async function cancelTrackingItem(id, trackingId){
     const title = state.lotteries[id].cfg.title;
     try{
@@ -2765,10 +2777,10 @@ function formatEta(ms){
         negatives: analyzedDraws > 0
           ? ['不是每組都安全，而是這筆舊追蹤缺少 analysis 欄位']
           : ['請先按同步開獎，再重新建立或重送這筆追蹤'],
-        bestGroupText: analyzedDraws > 0 ? '請重建追蹤後再看逐組結果' : '尚未同步歷史資料',
-        riskGroupText: analyzedDraws > 0 ? '舊追蹤缺少細節' : '目前無法比較四組風險',
-        structureSummary: analyzedDraws > 0 ? 'analysis 欄位缺失' : 'drawCount=0，現在看到的 0 不是分析結果',
-        actionAdvice: analyzedDraws > 0 ? '刪除舊追蹤並用目前版本重建' : '先同步最新歷史，再重新送出追蹤',
+        bestGroupText: analyzedDraws > 0 ? '可直接按「重算分析」補回逐組結果' : '尚未同步歷史資料',
+        riskGroupText: analyzedDraws > 0 ? '目前先以空分析顯示' : '目前無法比較四組風險',
+        structureSummary: analyzedDraws > 0 ? 'analysis 欄位缺失，可補算' : 'drawCount=0，現在看到的 0 不是分析結果',
+        actionAdvice: analyzedDraws > 0 ? '按下重算分析，系統會用最新歷史補回資料' : '先同步最新歷史，再按重算分析或重新送出追蹤',
         profile: analyzedDraws > 0 ? '舊追蹤' : '未同步',
         groupLineTexts: []
       };
@@ -2971,8 +2983,11 @@ function formatEta(ms){
           <div class="stat"><b>分析可靠度</b><span>${escapeHtml(String(rec.reliability ?? rec.confidence ?? '-'))}</span></div>
         </div>${groupLinesHtml}
         <div class="small" style="margin-top:8px;">最佳組：${escapeHtml(rec.bestGroupText || '—')}<br>風險組：${escapeHtml(rec.riskGroupText || '—')}<br>結構：${escapeHtml(rec.structureSummary || '—')}<br>建議：${escapeHtml(rec.actionAdvice || '—')}<br>正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
-        return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div>${recHtml}<div class="btns" style="margin-top:8px;"><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
+        return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div>${recHtml}<div class="btns" style="margin-top:8px;"><button class="secondary btnRecalcTracking" data-id="${escapeHtml(row.id || '')}">重算分析</button><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
       }).join('');
+      Array.from(box.querySelectorAll('.btnRecalcTracking')).forEach((btn)=>{
+        btn.addEventListener('click', ()=>recalculateTrackingItem(id, btn.dataset.id || ''));
+      });
       Array.from(box.querySelectorAll('.btnCancelTracking')).forEach((btn)=>{
         btn.addEventListener('click', ()=>cancelTrackingItem(id, btn.dataset.id || ''));
       });
@@ -3750,7 +3765,7 @@ function ensureTaskCenterUI(){
   fab.id = 'taskCenterFab';
   fab.className = 'green';
   fab.type = 'button';
-  fab.textContent = 'v11.2 任務中心';
+  fab.innerHTML = '<span aria-hidden="true">⚙️</span><span>v11.3.2 任務中心</span>'; fab.setAttribute('aria-label','v11.3.2 任務中心');
   fab.style.cssText = 'position:fixed;right:18px;bottom:max(92px, calc(env(safe-area-inset-bottom, 0px) + 92px));z-index:10020;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.45);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   fab.addEventListener('click', openTaskCenter);
   document.body.appendChild(fab);
@@ -3762,7 +3777,7 @@ function ensureTaskCenterUI(){
     <div style="width:min(1080px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(30,5,5,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
         <div>
-          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">v11.2 任務中心</div>
+          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">v11.3.2 任務中心</div>
           <div class="small" style="margin-top:4px;">用外掛選單方式先排任務，再決定立即執行或稍後執行。預定時間目前做排隊顯示，不會自動排程。</div>
         </div>
         <div class="btns" style="margin-top:0;">

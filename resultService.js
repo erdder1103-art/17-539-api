@@ -363,6 +363,96 @@ function buildRiskSets(analysis) {
   };
 }
 
+
+function buildHistoryAnalysisFromRows(rows, analysisWindow = ANALYSIS_WINDOW) {
+  const list = Array.isArray(rows) ? rows : [];
+  const draws = list
+    .map((row) => Array.isArray(row?.draw) ? row.draw.map(pad2).filter(Boolean) : [])
+    .filter((arr) => arr.length >= 5)
+    .slice(-analysisWindow)
+    .reverse();
+  const drawCount = draws.length;
+  const counts = {};
+  const pairCounts = {};
+  const tripleCounts = {};
+  const addCombo = (store, arr) => {
+    const key = comboKeyLocal(arr);
+    store[key] = Number(store[key] || 0) + 1;
+  };
+  draws.forEach((draw) => {
+    draw.forEach((n) => { counts[n] = Number(counts[n] || 0) + 1; });
+    getCombinationsLocal(draw, 2).forEach((pair) => addCombo(pairCounts, pair));
+    getCombinationsLocal(draw, 3).forEach((triple) => addCombo(tripleCounts, triple));
+  });
+  const allNums = Array.from({ length: 39 }, (_, i) => String(i + 1).padStart(2, '0'));
+  allNums.forEach((n) => { if (counts[n] === undefined) counts[n] = 0; });
+  const sorted = allNums.slice().sort((a, b) => Number(counts[b] || 0) - Number(counts[a] || 0) || Number(a) - Number(b));
+  const hotNumbers = sorted.slice(0, 10);
+  const warmNumbers = sorted.slice(10, 20);
+  const coldNumbers = sorted.slice(-10);
+  const coldSet = new Set(coldNumbers);
+  const hotSet = new Set(hotNumbers);
+  const warmSet = new Set(warmNumbers);
+  const midNumbers = sorted.filter((n) => !hotSet.has(n) && !warmSet.has(n) && !coldSet.has(n));
+
+  const shortSize = Math.min(draws.length, 30);
+  const mediumSize = Math.min(draws.length, 60);
+  const shortCounts = {};
+  const mediumCounts = {};
+  draws.slice(0, shortSize).forEach((draw) => draw.forEach((n) => { shortCounts[n] = Number(shortCounts[n] || 0) + 1; }));
+  draws.slice(0, mediumSize).forEach((draw) => draw.forEach((n) => { mediumCounts[n] = Number(mediumCounts[n] || 0) + 1; }));
+  allNums.forEach((n) => {
+    if (shortCounts[n] === undefined) shortCounts[n] = 0;
+    if (mediumCounts[n] === undefined) mediumCounts[n] = 0;
+  });
+  const trendScoreMap = {};
+  allNums.forEach((n) => {
+    const shortRate = shortSize ? Number(shortCounts[n] || 0) / shortSize : 0;
+    const mediumRate = mediumSize ? Number(mediumCounts[n] || 0) / mediumSize : 0;
+    trendScoreMap[n] = Number(((shortRate - mediumRate) * 100).toFixed(2));
+  });
+  const trendUpNumbers = allNums.slice().sort((a, b) => Number(trendScoreMap[b] || 0) - Number(trendScoreMap[a] || 0) || Number(a) - Number(b)).filter((n) => Number(trendScoreMap[n] || 0) > 0).slice(0, 8);
+  const trendDownNumbers = allNums.slice().sort((a, b) => Number(trendScoreMap[a] || 0) - Number(trendScoreMap[b] || 0) || Number(a) - Number(b)).filter((n) => Number(trendScoreMap[n] || 0) < 0).slice(0, 8);
+  const pairThreshold = drawCount >= 100 ? 3 : (drawCount >= 40 ? 2 : 1);
+  const tripleThreshold = drawCount >= 100 ? 2 : 1;
+  const highRiskPairs = Object.entries(pairCounts).filter(([, v]) => Number(v || 0) >= pairThreshold).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0)).map(([k]) => k);
+  const highRiskTriples = Object.entries(tripleCounts).filter(([, v]) => Number(v || 0) >= tripleThreshold).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0)).map(([k]) => k);
+  const riskyNumbers = Array.from(new Set([...highRiskPairs, ...highRiskTriples].flatMap((key) => String(key).split('-').map(pad2))));
+
+  return {
+    drawCount,
+    evaluatedWindow: drawCount,
+    analysisWindow,
+    shortWindow: shortSize,
+    mediumWindow: mediumSize,
+    counts,
+    hotScoreMap: counts,
+    warmNumbers,
+    hotNumbers,
+    coldNumbers,
+    midNumbers,
+    trendUpNumbers,
+    trendDownNumbers,
+    trendScoreMap,
+    pairCounts,
+    tripleCounts,
+    pairWeightMap: pairCounts,
+    tripleWeightMap: tripleCounts,
+    highRiskPairs,
+    highRiskTriples,
+    riskyNumbers
+  };
+}
+
+function rebuildTrackingAnalysis(tracking, lotteryType) {
+  const type = lotteryType === 'ttl' ? 'ttl' : '539';
+  const rows = getResultHistory(type);
+  const base = buildHistoryAnalysisFromRows(rows, ANALYSIS_WINDOW);
+  if (!base || Number(base.drawCount || 0) <= 0) return { ...tracking, analysis: { ...(tracking.analysis || {}), drawCount: 0, evaluatedWindow: 0 } };
+  const enriched = enrichAnalysisForTracking({ ...tracking, analysis: base });
+  return { ...tracking, analysis: enriched };
+}
+
 function enrichAnalysisForTracking(tracking) {
   const analysis = tracking.analysis || {};
   const groups = collectGroupKeysFromTracking(tracking);
@@ -932,7 +1022,7 @@ function getLearningState(lotteryType) {
 
 function getRecommendations(lotteryType) {
   const key = lotteryType === 'ttl' ? 'ttl' : '539';
-  const active = getActiveTrackings(key);
+  const active = getActiveTrackings(key).map((tracking) => rebuildTrackingAnalysis(tracking, key));
   const learning = getLearningState(key);
   const recommendations = active.map((tracking) => buildRecommendationForTracking(key, tracking, learning));
   return {
@@ -1047,7 +1137,7 @@ function compareActiveTrackings(lotteryType) {
 }
 
 async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issueKey) {
-  const active = getActiveTrackings(lotteryType);
+  const active = getActiveTrackings(lotteryType).map((tracking) => rebuildTrackingAnalysis(tracking, lotteryType));
   if (!Array.isArray(active) || !active.length) {
     return { skipped: true, reason: 'no active tracking' };
   }
@@ -1135,5 +1225,7 @@ module.exports = {
   getRangeSummary,
   compareActiveTrackings,
   issueToNumber,
-  buildNextIssue
+  buildNextIssue,
+  buildHistoryAnalysisFromRows,
+  rebuildTrackingAnalysis
 };

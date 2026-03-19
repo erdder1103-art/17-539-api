@@ -5,7 +5,7 @@ const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
-const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview } = require('./trackingService');
+const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview, recalculateTrackingAnalysis } = require('./trackingService');
 const { getActiveTrackings } = require('./trackingStore');
 const { processTrackingResult, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
@@ -258,6 +258,10 @@ app.get('/api/analysis/compare-active/:type', (req, res) => res.json(compareActi
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
+app.post('/api/tracking/recalculate', (req, res) => {
+  try { res.json(recalculateTrackingAnalysis(req.body || {})); }
+  catch (err) { res.status(400).json({ ok: false, message: err.message || '重算分析失敗' }); }
+});
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
 app.get('/api/recommend/:type', (req, res) => res.json(getRecommendations(req.params.type)));
 

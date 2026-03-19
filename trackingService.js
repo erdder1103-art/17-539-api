@@ -4,10 +4,11 @@ const {
   getTrackingHistory,
   cancelTrackingById,
   setActiveTracking,
+  updateTrackingById,
   normalizeLotteryType
 } = require('./trackingStore');
 const { formatTaipeiCompact, formatTaipeiDateTime } = require('./utils/time');
-const { buildNextIssue } = require('./resultService');
+const { buildNextIssue, rebuildTrackingAnalysis } = require('./resultService');
 
 const inflightByKey = new Map();
 const FULL_GROUP_SIZE = 19;
@@ -319,6 +320,39 @@ async function confirmManualTracking(payload) {
   }
 }
 
+
+
+function analysisNeedsRebuild(row) {
+  const analysis = row && row.analysis ? row.analysis : {};
+  const drawCount = Number(analysis.evaluatedWindow || analysis.analysisWindow || analysis.drawCount || 0);
+  const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails : [];
+  return !details.length || drawCount <= 0;
+}
+
+function maybeRebuildTrackingAnalysis(lotteryType, row) {
+  if (!row || !analysisNeedsRebuild(row)) return row;
+  const rebuilt = rebuildTrackingAnalysis(row, lotteryType);
+  const drawCount = Number(rebuilt?.analysis?.evaluatedWindow || rebuilt?.analysis?.drawCount || 0);
+  if (drawCount > 0) {
+    updateTrackingById(lotteryType, row.id, { analysis: rebuilt.analysis });
+  }
+  return rebuilt;
+}
+
+function recalculateTrackingAnalysis(payload) {
+  const lotteryType = normalizeLotteryType(payload.lotteryType);
+  const trackingId = String(payload.trackingId || '').trim();
+  if (!trackingId) throw new Error('缺少 trackingId');
+  const active = getActiveTrackings(lotteryType);
+  const target = active.find((row) => String(row.id || '') === trackingId);
+  if (!target) throw new Error('找不到可重算的追蹤');
+  const rebuilt = rebuildTrackingAnalysis(target, lotteryType);
+  const drawCount = Number(rebuilt?.analysis?.evaluatedWindow || rebuilt?.analysis?.drawCount || 0);
+  if (drawCount <= 0) throw new Error('目前沒有可用歷史資料，請先同步開獎');
+  const saved = updateTrackingById(lotteryType, trackingId, { analysis: rebuilt.analysis, updatedAt: formatTaipeiDateTime() });
+  return { ok: true, tracking: saved || rebuilt, drawCount, message: `已補上近 ${drawCount} 期分析` };
+}
+
 async function cancelTracking(payload) {
   const lotteryType = normalizeLotteryType(payload.lotteryType);
   const trackingId = String(payload.trackingId || '').trim();
@@ -339,7 +373,7 @@ async function cancelTracking(payload) {
 }
 
 function getTrackingOverview(lotteryType) {
-  const active = getActiveTrackings(lotteryType);
+  const active = getActiveTrackings(lotteryType).map((row) => maybeRebuildTrackingAnalysis(lotteryType, row));
   return {
     ok: true,
     active,
@@ -348,4 +382,4 @@ function getTrackingOverview(lotteryType) {
   };
 }
 
-module.exports = { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview, FULL_GROUP_SIZE };
+module.exports = { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview, recalculateTrackingAnalysis, FULL_GROUP_SIZE };
