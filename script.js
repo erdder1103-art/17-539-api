@@ -2144,14 +2144,16 @@ function formatEta(ms){
       if(!worstReasons.length) worstReasons.push(`暴露值 ${riskiest.riskScore.toFixed(1)}`);
     }
 
-    let structureSummary = `熱號分布 ${metrics.map((item)=>item.hotCount).join('/')}`;
-    if(profile === '均衡穩定型') structureSummary += `，四組中有 ${stableGroupCount} 組屬低碰撞區`;
-    else if(profile === '熱號偏斜型') structureSummary += `，熱度落差 ${hotSpread}，有偏向單組集中的現象`;
-    else if(profile === '雙碰撞偏高型') structureSummary += `，雙碰撞 ${totalPairHits} 組、總雙號暴露 ${totalPairExposure}`;
-    else if(profile === '三碰撞警戒型') structureSummary += `，三碰撞 ${totalTripleHits} 組、總三號暴露 ${totalTripleExposure}`;
-    else if(profile === '冷號保守型') structureSummary += `，冷號比例高、整體熱區承接偏低`;
-    else if(profile === '熱區承接型') structureSummary += `，平均熱度 ${heatAverage.toFixed(1)}，偏向追近期熱區`;
-    else structureSummary += `，結構指紋差 ${fingerprintSpread}`;
+    const hotSummary = metrics.map((item)=>`第${item.detail.groupIndex}組${item.hotCount}顆`).join('、');
+    let structureSummary = `四組熱號顆數：${hotSummary}`;
+    if(metrics.every((item)=>item.hotCount === 0)) structureSummary += '（0 代表該組未落入熱號名單，不是未分析）';
+    else if(profile === '均衡穩定型') structureSummary += `｜低碰撞組 ${stableGroupCount} 組`;
+    else if(profile === '熱號偏斜型') structureSummary += `｜熱度落差 ${hotSpread}`;
+    else if(profile === '雙碰撞偏高型') structureSummary += `｜雙碰撞 ${totalPairHits} 組｜總雙號暴露 ${totalPairExposure}`;
+    else if(profile === '三碰撞警戒型') structureSummary += `｜三碰撞 ${totalTripleHits} 組｜總三號暴露 ${totalTripleExposure}`;
+    else if(profile === '冷號保守型') structureSummary += '｜冷號比例高、熱區承接偏低';
+    else if(profile === '熱區承接型') structureSummary += `｜平均熱度 ${heatAverage.toFixed(1)}`;
+    else structureSummary += `｜指紋落差 ${fingerprintSpread}`;
 
     let actionAdvice = '建議維持目前四組與全車配置，可直接觀察開獎。';
     if(riskLevel.startsWith('高')) actionAdvice = `建議優先替換第${riskiest?.detail?.groupIndex || '?'}組，再重新生成一次較安全。`;
@@ -2171,6 +2173,13 @@ function formatEta(ms){
     negatives.push(`總雙號暴露 ${totalPairExposure}、總三號暴露 ${totalTripleExposure}`);
     negatives.push(actionAdvice);
 
+    const groupBreakdown = metrics.map((item)=>{
+      const nums = (Array.isArray(item.detail.groupNumbers) ? item.detail.groupNumbers : []).join(' ');
+      const pairText = item.pairHits.length ? item.pairHits.slice(0,2).map((v)=>String(v).replaceAll('-', '、')).join(' / ') : '無';
+      const tripleText = item.tripleHits.length ? item.tripleHits.slice(0,1).map((v)=>String(v).replaceAll('-', '、')).join(' / ') : '無';
+      const riskNumsText = item.riskyNums.length ? item.riskyNums.join('、') : '無';
+      return `第${item.detail.groupIndex}組【${item.structureType}】${nums}｜熱/中/冷 ${item.detail.hotCount}/${item.detail.midCount || 0}/${item.detail.coldCount || 0}｜熱度分 ${item.heatScore}｜雙連號 ${pairText}｜三連號 ${tripleText}｜風險號 ${riskNumsText}｜雙暴露 ${item.pairExposure}｜三暴露 ${item.tripleExposure}｜分數 ${item.riskScore.toFixed(1)}`;
+    });
     return {
       trackingId: row?.id || apiRec?.trackingId || '',
       passTendency: Number(passTendency.toFixed(1)),
@@ -2178,6 +2187,7 @@ function formatEta(ms){
       reliability: Number(reliability.toFixed(1)),
       positives: Array.from(new Set(positives)).slice(0,4),
       negatives: Array.from(new Set(negatives)).slice(0,4),
+      groupBreakdown,
       bestGroupText: safest ? `第${safest.detail.groupIndex}組最穩：${bestReasons.slice(0,3).join('、')}` : '',
       riskGroupText: riskiest ? `第${riskiest.detail.groupIndex}組風險最高：${worstReasons.slice(0,3).join('、')}` : '',
       structureSummary,
@@ -2223,7 +2233,8 @@ function formatEta(ms){
           <div class="stat"><b>風險等級</b><span>${escapeHtml(rec.riskLevel || '-')}</span></div>
           <div class="stat"><b>分析可靠度</b><span>${escapeHtml(String(rec.reliability ?? rec.confidence ?? '-'))}</span></div>
         </div>
-        <div class="small" style="margin-top:8px;">最佳組：${escapeHtml(rec.bestGroupText || '—')}<br>風險組：${escapeHtml(rec.riskGroupText || '—')}<br>結構：${escapeHtml(rec.structureSummary || '—')}<br>建議：${escapeHtml(rec.actionAdvice || '—')}<br>正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
+        ${rec.groupBreakdown?.length ? `<div class="small" style="margin-top:8px;"><b>逐組分析：</b><br>${rec.groupBreakdown.map((line)=>escapeHtml(line)).join('<br>')}</div>` : ''}
+        <div class="small" style="margin-top:8px;">最佳組：${escapeHtml(rec.bestGroupText || '—')}<br>風險組：${escapeHtml(rec.riskGroupText || '—')}<br>熱號摘要：${escapeHtml(rec.structureSummary || '—')}<br>建議：${escapeHtml(rec.actionAdvice || '—')}<br>正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
         return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div>${recHtml}<div class="btns" style="margin-top:8px;"><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
       }).join('');
       Array.from(box.querySelectorAll('.btnCancelTracking')).forEach((btn)=>{

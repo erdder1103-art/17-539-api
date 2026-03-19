@@ -512,10 +512,13 @@ function summarizeGroupLine(detail) {
   else if (pairHits.length || pairExposure >= 3 || hot >= 3 || riskyNums.length >= 3) tag = '偏風險';
   else if (hot === 0 && riskyNums.length <= 1) tag = '保守';
   const reasons = [];
-  if (tripleHits.length) reasons.push(`三連號 ${formatComboList(tripleHits, 1)}`);
-  if (!tripleHits.length && pairHits.length) reasons.push(`雙連號 ${formatComboList(pairHits, 2)}`);
-  if (riskyNums.length) reasons.push(`風險號 ${riskyNums.join('、')}`);
   reasons.push(`熱/中/冷 ${hot}/${mid}/${cold}`);
+  reasons.push(`熱度分 ${Number(detail.groupHeatScore || 0)}`);
+  if (tripleHits.length) reasons.push(`三連號 ${formatComboList(tripleHits, 1)}`);
+  else reasons.push('三連號 無');
+  if (pairHits.length) reasons.push(`雙連號 ${formatComboList(pairHits, 2)}`);
+  else reasons.push('雙連號 無');
+  reasons.push(`風險號 ${riskyNums.length ? riskyNums.join('、') : '無'}`);
   reasons.push(`雙暴露 ${pairExposure}`);
   reasons.push(`三暴露 ${tripleExposure}`);
   return `第${detail.groupIndex}組【${tag}】${nums}｜${reasons.join('｜')}｜分數 ${score.toFixed(1)}`;
@@ -634,13 +637,13 @@ function buildRiskNarrativeFromAnalysis(features, tracking, profile) {
   });
   const safest = sortedByRisk[0] || null;
   const riskiest = sortedByRisk[sortedByRisk.length - 1] || null;
-  const heatSpread = hotCounts.length ? `${hotCounts.join('/')}` : '-';
+  const heatSpread = hotCounts.length ? hotCounts.map((count, idx) => `第${idx + 1}組${count}顆`).join('、') : '-';
 
   if (totalTripleHits === 0) positives.push('主四組沒有撞到高風險三連號');
   else positives.push(`主四組共有 ${totalTripleHits} 組撞到高風險三連號`);
   if (totalPairHits === 0) positives.push('主四組沒有撞到高風險雙連號');
   else positives.push(`主四組共有 ${totalPairHits} 組撞到高風險雙連號`);
-  positives.push(`四組熱號落點 ${heatSpread}`);
+  positives.push(`四組熱號顆數：${heatSpread}${hotCounts.every((v) => Number(v) === 0) ? '（0 代表這組沒有落在本期熱號名單，不是未分析）' : ''}`);
   if (safest) {
     const safeReason = [];
     if (!(safest.riskyTripleHits || []).length && !(safest.riskyPairHits || []).length) safeReason.push('未撞雙/三連號');
@@ -789,7 +792,7 @@ function buildRecommendationForTracking(lotteryType, tracking, learningState) {
     groupBreakdown: (narrative.groupBreakdown || []).slice(0, 4),
     bestGroupText: narrative.safest ? `第${narrative.safest.groupIndex}組較穩` : '',
     riskGroupText: narrative.riskiest ? `第${narrative.riskiest.groupIndex}組需優先留意` : '',
-    structureSummary: `熱號分布 ${hotCounts.join('/')}`,
+    structureSummary: `四組熱號顆數：${hotCounts.map((count, idx) => `第${idx + 1}組${count}顆`).join('、')}${hotCounts.every((v) => Number(v) === 0) ? '（0 代表未落入熱號名單，不是沒有分析）' : ''}`,
     actionAdvice: narrative.riskiest ? `先檢查第${narrative.riskiest.groupIndex}組，再決定是否重生。` : '目前四組都可先保留觀察。',
     features,
     debug: {
