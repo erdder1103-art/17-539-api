@@ -2372,8 +2372,8 @@ function formatEta(ms){
 
   async function submitManualTracking(id){
     const s = state.lotteries[id];
-    const manualSourceInput = $(`${id}_manualSource`);
-    const sourceName = String((manualSourceInput?.value ?? manualSourceInput?.getAttribute('value') ?? '')).trim() || '手動追蹤';
+    const sourceInput = $(`${id}_manualSource`);
+    const sourceName = String(sourceInput?.value || '').trim() || '手動追蹤';
     const maxNum = s.cfg.maxNum;
     const parsed = {
       group1: parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), maxNum),
@@ -2384,32 +2384,32 @@ function formatEta(ms){
     };
     const fallback = getCurrentPlanGroupsForManual(id) || {};
     const normalizedGroups = {
-      group1: parsed.group1.length === 5 ? parsed.group1 : (Array.isArray(fallback.group1) && fallback.group1.length === 5 ? fallback.group1 : parsed.group1),
-      group2: parsed.group2.length === 5 ? parsed.group2 : (Array.isArray(fallback.group2) && fallback.group2.length === 5 ? fallback.group2 : parsed.group2),
-      group3: parsed.group3.length === 5 ? parsed.group3 : (Array.isArray(fallback.group3) && fallback.group3.length === 5 ? fallback.group3 : parsed.group3),
-      group4: parsed.group4.length === 5 ? parsed.group4 : (Array.isArray(fallback.group4) && fallback.group4.length === 5 ? fallback.group4 : parsed.group4),
-      full: parsed.full.length === 19 ? parsed.full : (Array.isArray(fallback.full) && fallback.full.length === 19 ? fallback.full : parsed.full)
+      group1: parsed.group1.length === 5 ? parsed.group1 : (Array.isArray(fallback.group1) && fallback.group1.length === 5 ? fallback.group1.slice() : parsed.group1),
+      group2: parsed.group2.length === 5 ? parsed.group2 : (Array.isArray(fallback.group2) && fallback.group2.length === 5 ? fallback.group2.slice() : parsed.group2),
+      group3: parsed.group3.length === 5 ? parsed.group3 : (Array.isArray(fallback.group3) && fallback.group3.length === 5 ? fallback.group3.slice() : parsed.group3),
+      group4: parsed.group4.length === 5 ? parsed.group4 : (Array.isArray(fallback.group4) && fallback.group4.length === 5 ? fallback.group4.slice() : parsed.group4),
+      full: parsed.full.length === 19 ? parsed.full : (Array.isArray(fallback.full) && fallback.full.length === 19 ? fallback.full.slice() : parsed.full)
     };
     [['manualGroup1', normalizedGroups.group1], ['manualGroup2', normalizedGroups.group2], ['manualGroup3', normalizedGroups.group3], ['manualGroup4', normalizedGroups.group4], ['manualFull', normalizedGroups.full]].forEach(([field, vals])=>{
       const input = $(`${id}_${field}`);
       if(input && Array.isArray(vals) && vals.length) input.value = vals.join(' ');
     });
     const groups = [normalizedGroups.group1, normalizedGroups.group2, normalizedGroups.group3, normalizedGroups.group4];
-    const sizes = groups.map(g => Array.isArray(g) ? g.length : 0);
     if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
-      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼（目前 ${sizes.join('/')}）`, 'warn');
+      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼`, 'warn');
       return;
     }
-    if(new Set(groups.flat()).size !== groups.flat().length){
+    const merged = groups.flat();
+    if(new Set(merged).size !== merged.length){
       showMiniNotice(`${s.cfg.title}：手動第一組到第四組之間不可重複`, 'warn');
       return;
     }
     if(normalizedGroups.full.length !== 19 || new Set(normalizedGroups.full).size !== 19){
-      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼（目前 ${normalizedGroups.full.length} 顆）`, 'warn');
+      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼`, 'warn');
       return;
     }
     try{
-      const result = await postJsonApi('/api/manual-tracking', {
+      const res = await fetch(`${API_BASE}/api/manual-tracking`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2421,8 +2421,10 @@ function formatEta(ms){
           analysis: buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null)
         })
       });
-      await refreshTrackingBoard(id, { silent: true });
+      const result = await res.json().catch(()=>null);
+      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
       showMiniNotice(result?.message || `${s.cfg.title}：已新增手動追蹤`, 'ok');
+      await refreshTrackingBoard(id, { silent: true });
     }catch(err){
       showMiniNotice(`${s.cfg.title}：手動追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }
@@ -2888,107 +2890,88 @@ function buildCandidatePlanMetrics(mains, analysis){
   const highRiskTriples = new Set(analysis.highRiskTriples || []);
   const hot = new Set(analysis.hot || []);
   const warm = new Set(analysis.warm || []);
-  const cold = new Set(analysis.cold || []);
-  const trendUp = new Set(analysis.trendUp || []);
-  const risky = new Set(analysis.riskyNumberSet ? Array.from(analysis.riskyNumberSet) : []);
   let totalScore = 0;
   let twoHitRisk = 0;
   let threeHitRisk = 0;
-  const hotCounts = [];
   const detailScores = [];
   const groupDetails = [];
   mains.forEach((group, index) => {
     const sorted = group.map(n => String(n).padStart(2,'0')).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
     const hotCount = sorted.filter(n => hot.has(n)).length;
     const warmCount = sorted.filter(n => warm.has(n)).length;
-    const coldCount = sorted.filter(n => cold.has(n)).length;
-    const trendCount = sorted.filter(n => trendUp.has(n)).length;
-    const riskyList = sorted.filter(n => risky.has(n));
-    const riskyCount = riskyList.length;
     const pairHits = getCombinations(sorted,2).map(pair=>comboKey(pair)).filter(key => highRiskPairs.has(key));
     const tripleHits = getCombinations(sorted,3).map(triple=>comboKey(triple)).filter(key => highRiskTriples.has(key));
     const pairHitCount = pairHits.length;
     const tripleHitCount = tripleHits.length;
+    const pairRiskNums = new Set(pairHits.flatMap(k => String(k).split(',')));
+    const tripleRiskNums = new Set(tripleHits.flatMap(k => String(k).split(',')));
+    const riskComponents = new Set();
+    sorted.forEach(n => {
+      if (hot.has(n) || warm.has(n) || pairRiskNums.has(n) || tripleRiskNums.has(n)) riskComponents.add(n);
+    });
+    const riskComponentCount = riskComponents.size;
     const pairExposure = getCombinations(sorted,2).reduce((sum,pair)=> sum + Number(analysis.pairCounts?.[comboKey(pair)] || 0), 0);
     const tripleExposure = getCombinations(sorted,3).reduce((sum,triple)=> sum + Number(analysis.tripleCounts?.[comboKey(triple)] || 0), 0);
-    const tailMap = {};
-    const decadeMap = {};
-    let oddCount = 0;
-    let adjacency = 0;
-    const nums = sorted.map(n=>parseInt(n,10));
-    nums.forEach((value, idx)=>{
-      const tail = value % 10;
-      const decade = Math.floor((value - 1) / 10);
-      tailMap[tail] = (tailMap[tail] || 0) + 1;
-      decadeMap[decade] = (decadeMap[decade] || 0) + 1;
-      if(value % 2 === 1) oddCount += 1;
-      if(idx > 0 && value - nums[idx-1] === 1) adjacency += 1;
-    });
-    const tailPenalty = Math.max(0, (Math.max(...Object.values(tailMap)) || 1) - 2);
-    const decadePenalty = Math.max(0, (Math.max(...Object.values(decadeMap)) || 1) - 2);
-    const oddPenalty = Math.abs(oddCount - 2.5);
-    const coldPenalty = Math.max(0, coldCount - 1) * 0.65;
-    const hotPenalty = Math.max(0, hotCount - 2) * 1.25;
-    const trendBonus = Math.min(2, trendCount) * 1.45 + Math.min(2, warmCount) * 0.55;
-    const score = pairExposure * 1.15 + tripleExposure * 2.4 + pairHitCount * 5.2 + tripleHitCount * 11.5 + riskyCount * 1.8 + tailPenalty * 2.0 + decadePenalty * 1.7 + adjacency * 1.15 + oddPenalty + coldPenalty + hotPenalty - trendBonus;
+    const score = riskComponentCount * 3 + pairHitCount * 2.5 + tripleHitCount * 4 + pairExposure * 0.2 + tripleExposure * 0.35;
     totalScore += score;
     twoHitRisk += pairHitCount;
     threeHitRisk += tripleHitCount;
-    hotCounts.push(hotCount);
     detailScores.push(Number(score.toFixed(2)));
     let status = '可用';
-    let reason = '分散正常，可保留';
-    if (tripleHitCount > 0 || pairHitCount >= 2 || score >= 17.5 || (riskyCount >= 4 && (tailPenalty + decadePenalty) >= 2)) {
+    let reason = '風險成分 0-2 顆，可用';
+    if (riskComponentCount >= 4 || tripleHitCount > 0 || pairHitCount >= 2) {
       status = '高風險';
-      reason = tripleHitCount > 0 ? '命中高風險三碰，整組淘汰' : pairHitCount >= 2 ? '高風險雙碰過多，建議重生' : '風險集中過高或分布過擠';
-    } else if (pairHitCount === 1 || score >= 10.8 || riskyCount >= 3 || decadePenalty >= 2 || tailPenalty >= 2) {
-      status = '需留意';
-      reason = pairHitCount === 1 ? '有 1 組高風險雙碰，建議再分散' : '局部集中或風險略高';
-    } else if (hotCount >= 3 && trendCount === 0) {
-      status = '偏熱';
-      reason = '熱號偏多，可再觀察';
+      reason = tripleHitCount > 0 ? '命中高風險三連號' : pairHitCount >= 2 ? '命中多組高風險雙連號' : '熱號/中熱/高風險成分超過 3 顆';
+    } else if (riskComponentCount === 3 || (riskComponentCount === 2 && (pairHitCount > 0 || tripleHitCount > 0))) {
+      status = '可觀察';
+      reason = '風險成分 2-3 顆，可觀察使用';
     }
     groupDetails.push({
       index: index + 1,
       nums: sorted,
       hotCount,
       warmCount,
-      coldCount,
-      trendCount,
-      riskyCount,
-      riskyList,
+      riskyCount: riskComponentCount,
+      riskyList: Array.from(riskComponents),
       pairHits,
       tripleHits,
       pairExposure,
       tripleExposure,
-      tailPenalty,
-      decadePenalty,
-      adjacency,
       score: Number(score.toFixed(2)),
       status,
       reason
     });
   });
-  const hotSpread = hotCounts.length ? Math.max(...hotCounts) - Math.min(...hotCounts) : 0;
   const highCount = groupDetails.filter(g => g.status === '高風險').length;
-  const watchCount = groupDetails.filter(g => g.status === '需留意').length;
-  totalScore += hotSpread * 2.3 + highCount * 8.2 + Math.max(0, watchCount - 1) * 2.4;
-  const canNotify = highCount === 0 && watchCount <= 2;
-  const packStatus = canNotify ? (watchCount === 0 ? '可通報' : '勉強可用') : '不可通報';
+  const watchCount = groupDetails.filter(g => g.status === '可觀察').length;
+  let packStatus = '可通報';
+  let summary = '四組主號風險成分偏低，可直接通報。';
+  let canNotify = true;
+  if (highCount > 0) {
+    packStatus = '不可通報';
+    summary = `本輪有 ${highCount} 組高風險，建議先鎖定可用組，再重生未鎖定組。`;
+    canNotify = false;
+  } else if (watchCount > 0) {
+    packStatus = '可觀察';
+    summary = `本輪有 ${watchCount} 組可觀察，建議先鎖定可用組，再視情況補強。`;
+    canNotify = false;
+  }
   return {
     totalScore: Number(totalScore.toFixed(2)),
     twoHitRisk,
     threeHitRisk,
-    hotCounts,
+    hotSpread: 0,
     detailScores,
-    hotSpread,
-    groupDetails,
     highCount,
     watchCount,
+    watchLikeCount: groupDetails.filter(g => g.status !== '高風險').length,
+    canNotify,
     packStatus,
-    canNotify
+    summary,
+    groupDetails
   };
 }
+
 
 async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   const hot = (analysis.hot || []).slice(0, 8);
@@ -3058,7 +3041,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
       twoHitRisk: metrics.twoHitRisk,
       threeHitRisk: metrics.threeHitRisk,
       lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
-      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
+      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '可觀察').length,
       rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
       selectedPool: 'pack-validation-v1135-relaxed',
       downgraded: true,
@@ -3080,7 +3063,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     for(let round=0; round<6; round++){
       if(bestMetrics.canNotify) break;
       const ordered = bestMetrics.groupDetails.slice().sort((a,b)=>{
-        const weight = { '高風險': 3, '需留意': 2, '偏熱': 1, '可用': 0 };
+        const weight = { '高風險': 3, '可觀察': 2, '偏熱': 1, '可用': 0 };
         const diff = (weight[b.status]||0) - (weight[a.status]||0);
         if(diff) return diff;
         return (b.score||0) - (a.score||0);
@@ -3145,7 +3128,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         const metrics = buildCandidatePlanMetrics([proposed], analysis);
         const detail = metrics.groupDetails[0];
         if(!attemptBest || detail.score < attemptBest.detail.score){ attemptBest = { proposed, localUsed, detail }; }
-        if(detail.status === '可用' || detail.status === '偏熱' || (detail.status === '需留意' && detail.score < 9.4)) break;
+        if(detail.status === '可用' || detail.status === '偏熱' || (detail.status === '可觀察' && detail.score < 9.4)) break;
       }
       if(!attemptBest || !attemptBest.proposed || !attemptBest.proposed.length){ valid = false; break; }
       groups[groupNames[gi]] = attemptBest.proposed;
@@ -3176,7 +3159,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
       twoHitRisk: metrics.twoHitRisk,
       threeHitRisk: metrics.threeHitRisk,
       lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用' || v.status === '偏熱').length,
-      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '需留意').length,
+      mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '可觀察').length,
       rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
       selectedPool: 'pack-validation-v1135',
       downgraded: !metrics.canNotify,
@@ -3189,7 +3172,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
       noQualifiedResult: !finalMetrics.canNotify,
       score: Number(Math.max(52, (99 - finalMetrics.totalScore)).toFixed(1)),
       whyQualified: finalMetrics.canNotify
-        ? `已從 ${candidateCount} 套候選中挑出四組可用且風險已分散的方案；需留意 ${finalMetrics.watchCount} 組，高風險 ${finalMetrics.highCount} 組。`
+        ? `已從 ${candidateCount} 套候選中挑出四組可用且風險已分散的方案；可觀察 ${finalMetrics.watchCount} 組，高風險 ${finalMetrics.highCount} 組。`
         : `已搜尋 ${candidateCount} 套候選，但本輪沒有找到四組都過線的方案；系統已自動重整爆雷組後仍未過線。`
     };
     if(finalMetrics.canNotify){
@@ -3728,7 +3711,7 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     groupDetails: bestResult.groupDetails,
     packStatus: bestResult.packStatus || '不可通報',
     canNotify: !!bestResult.canNotify,
-    watchCount: (bestResult.groupDetails || []).filter(g => g.status === '需留意').length,
+    watchCount: (bestResult.groupDetails || []).filter(g => g.status === '可觀察').length,
     highCount: (bestResult.groupDetails || []).filter(g => g.status === '高風險').length
   } : buildCandidatePlanMetrics(fallbackMainGroups, analysis || {});
   const groupRows = (metrics.groupDetails || []).map((detail, idx)=>{
@@ -3751,7 +3734,7 @@ function buildGenerationPreviewState(id, bestResult, analysis){
   const worst = sorted[sorted.length-1] || null;
   const hasAnyNumbers = groupRows.some(g => Array.isArray(g.nums) && g.nums.length);
   const highCount = metrics.highCount ?? groupRows.filter(g=>g.status==='高風險').length;
-  const watchCount = metrics.watchCount ?? groupRows.filter(g=>g.status==='需留意').length;
+  const watchCount = metrics.watchCount ?? groupRows.filter(g=>g.status==='可觀察').length;
   let summary = '四組已通過驗收，可直接通報。';
   let canNotify = !!metrics.canNotify;
   let packStatus = metrics.packStatus || (highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報');
@@ -3760,8 +3743,8 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     canNotify = false;
     packStatus = '不可通報';
   } else if (highCount > 0) summary = `本輪不通報：有 ${highCount} 組超過風險線，請直接重新生成。`;
-  else if (watchCount > 1) summary = `本輪偏髒：有 ${watchCount} 組需留意，建議再生一次。`;
-  else if (watchCount === 1) summary = '本輪可用，但有 1 組需留意。';
+  else if (watchCount > 1) summary = `本輪偏髒：有 ${watchCount} 組可觀察，建議再生一次。`;
+  else if (watchCount === 1) summary = '本輪可用，但有 1 組可觀察。';
   return { summary, best, worst, groups: groupRows, canNotify, packStatus };
 }
 
