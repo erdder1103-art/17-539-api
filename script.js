@@ -2259,184 +2259,67 @@ function formatEta(ms){
 
 
   function buildDisplayRecommendation(row, apiRec){
-    const analysis = row?.analysis || {};
-    const details = Array.isArray(analysis.riskGroupDetails) ? analysis.riskGroupDetails.slice(0,4) : [];
-    const analyzedDraws = Number(analysis.evaluatedWindow || analysis.analysisWindow || analysis.drawCount || 0);
-    if(!details.length || analyzedDraws <= 0){
+    if(apiRec && Array.isArray(apiRec.groupLineTexts) && apiRec.groupLineTexts.length){
       return {
         trackingId: row?.id || apiRec?.trackingId || '',
         passTendency: Number(apiRec?.passTendency || 0),
-        riskLevel: analyzedDraws > 0 ? '待補分析' : '尚未同步分析',
-        reliability: analyzedDraws > 0 ? Number(apiRec?.reliability || 0) : 0,
-        positives: analyzedDraws > 0
-          ? ['此筆追蹤尚未帶入完整逐組分析，請重新建立一次追蹤']
-          : ['目前這筆追蹤沒有綁到近期待開獎歷史資料，無法判斷熱號/雙連號/三連號'],
-        negatives: analyzedDraws > 0
-          ? ['不是每組都安全，而是這筆舊追蹤缺少 analysis 欄位']
-          : ['請先按同步開獎，再重新建立或重送這筆追蹤'],
-        bestGroupText: analyzedDraws > 0 ? '可直接按「重算分析」補回逐組結果' : '尚未同步歷史資料',
-        riskGroupText: analyzedDraws > 0 ? '目前先以空分析顯示' : '目前無法比較四組風險',
-        structureSummary: analyzedDraws > 0 ? 'analysis 欄位缺失，可補算' : 'drawCount=0，現在看到的 0 不是分析結果',
-        actionAdvice: analyzedDraws > 0 ? '按下重算分析，系統會用最新歷史補回資料' : '先同步最新歷史，再按重算分析或重新送出追蹤',
-        profile: analyzedDraws > 0 ? '舊追蹤' : '未同步',
-        groupLineTexts: []
+        riskLevel: String(apiRec?.riskLevel || '未分析'),
+        reliability: Number(apiRec?.reliability || 0),
+        positives: Array.isArray(apiRec?.positives) ? apiRec.positives : [],
+        negatives: Array.isArray(apiRec?.negatives) ? apiRec.negatives : [],
+        bestGroupText: apiRec?.bestGroupText || '尚無',
+        riskGroupText: apiRec?.riskGroupText || '尚無',
+        structureSummary: apiRec?.structureSummary || '',
+        actionAdvice: apiRec?.actionAdvice || '',
+        profile: apiRec?.profile || '',
+        groupLineTexts: apiRec.groupLineTexts
       };
     }
-
-    const metrics = details.map((detail, idx)=>{
-      const pairExposure = Number(detail.groupPairExposure || 0);
-      const tripleExposure = Number(detail.groupTripleExposure || 0);
-      const riskyNums = Array.isArray(detail.riskyNumbers) ? detail.riskyNumbers.filter(Boolean) : [];
-      const pairHits = Array.isArray(detail.riskyPairHits) ? detail.riskyPairHits.filter(Boolean) : [];
-      const tripleHits = Array.isArray(detail.riskyTripleHits) ? detail.riskyTripleHits.filter(Boolean) : [];
-      const hotCount = Number(detail.hotCount || 0);
-      const warmCount = Number(detail.warmCount || 0);
-      const midCount = Number(detail.midCount || 0);
-      const coldCount = Number(detail.coldCount || 0);
-      const trendUpCount = Number(detail.trendUpCount || 0);
-      const trendDownCount = Number(detail.trendDownCount || 0);
-      const fingerprint = Number(detail.identityFingerprint || 0);
-      const heatScore = Number(detail.groupHeatScore || 0);
-      const trendScore = Number(detail.groupTrendScore || 0);
-      const tailFocus = Number(detail.tailFocus || 0);
-      const decadeFocus = Number(detail.decadeFocus || 0);
-      const adjacency = Array.isArray(detail.adjacentPairs) ? detail.adjacentPairs.length : 0;
-      const oddCount = Number(detail.oddCount || 0);
-      const spanValue = Number(detail.spanValue || 0);
-      const fingerprintBucket = Math.abs(fingerprint % 7);
-      const balanceGap = Math.abs(hotCount - 1.5) + Math.abs(pairExposure - 1.2) * 0.7 + Math.abs(tripleExposure - 0.4) * 1.2 + Math.max(0, tailFocus - 2) * 0.9 + Math.abs(oddCount - 2.5) * 0.7;
-      const riskScore = pairExposure * 1.2 + tripleExposure * 2.8 + riskyNums.length * 1.45 + pairHits.length * 2.7 + tripleHits.length * 4.8 + Math.max(0, hotCount - 2) * 1.15 + Math.max(0, coldCount - 2) * 0.8 + Math.max(0, tailFocus - 2) * 1.4 + Math.max(0, decadeFocus - 2) * 1.1 + adjacency * 1.1 + balanceGap * 0.9 + fingerprintBucket * 0.18 - Math.min(2, trendUpCount) * 0.8;
-      let structureType = '均衡控風';
-      if(tripleHits.length || tripleExposure >= 2) structureType = '三碰撞暴露';
-      else if(pairHits.length || pairExposure >= 8) structureType = '雙碰撞偏高';
-      else if(tailFocus >= 3 || decadeFocus >= 3) structureType = '區段過度集中';
-      else if(hotCount >= 3) structureType = '熱號集中';
-      else if(coldCount >= 3 && trendUpCount === 0) structureType = '冷號保守';
-      else if(trendUpCount >= 2 && hotCount <= 2) structureType = '轉熱承接';
-      else if(riskyNums.length >= 3) structureType = '高風險號堆疊';
-      const lineText = `第${detail.groupIndex}組【${structureType}】${detail.groupNumbers.join(' ')}｜熱/溫/中/冷 ${hotCount}/${warmCount}/${midCount}/${coldCount}｜轉熱 ${trendUpCount}｜雙連號 ${pairHits.length ? pairHits.join('、') : '無'}｜三連號 ${tripleHits.length ? tripleHits.join('、') : '無'}｜風險號 ${riskyNums.length ? riskyNums.join('、') : '無'}｜雙暴露 ${pairExposure}｜三暴露 ${tripleExposure}｜尾數集中 ${tailFocus}｜十位集中 ${decadeFocus}｜分數 ${riskScore.toFixed(1)}`;
-      return {
-        detail,
-        idx,
-        pairExposure,
-        tripleExposure,
-        riskyNums,
-        pairHits,
-        tripleHits,
-        hotCount,
-        warmCount,
-        midCount,
-        coldCount,
-        trendUpCount,
-        trendDownCount,
-        fingerprint,
-        heatScore,
-        trendScore,
-        tailFocus,
-        decadeFocus,
-        adjacency,
-        oddCount,
-        spanValue,
-        fingerprintBucket,
-        balanceGap,
-        riskScore,
-        structureType,
-        lineText
-      };
+    const analysis = row?.analysis || {};
+    const mainGroups = ['group1','group2','group3','group4'].map((key, idx)=>({ idx: idx+1, nums: Array.isArray(row?.groups?.[key]) ? row.groups[key].map(v=>String(v).padStart(2,'0')) : [] }));
+    const hot = new Set((analysis.hotNumbers || analysis.hot || []).map((v)=>String(v).padStart(2,'0')));
+    const warm = new Set((analysis.warmNumbers || analysis.warm || []).map((v)=>String(v).padStart(2,'0')));
+    const highRiskPairs = new Set((analysis.highRiskPairs || []).map(String));
+    const highRiskTriples = new Set((analysis.highRiskTriples || []).map(String));
+    const details = mainGroups.map((group)=>{
+      const pairHits = getCombinations(group.nums,2).map(comboKey).filter((key)=>highRiskPairs.has(key));
+      const tripleHits = getCombinations(group.nums,3).map(comboKey).filter((key)=>highRiskTriples.has(key));
+      const pairRiskNums = new Set(pairHits.flatMap((k)=>String(k).split('-').map((v)=>String(v).padStart(2,'0'))));
+      const tripleRiskNums = new Set(tripleHits.flatMap((k)=>String(k).split('-').map((v)=>String(v).padStart(2,'0'))));
+      const riskComponents = new Set();
+      group.nums.forEach((n)=>{ if(hot.has(n) || warm.has(n) || pairRiskNums.has(n) || tripleRiskNums.has(n)) riskComponents.add(n); });
+      const riskyCount = riskComponents.size;
+      let status = '可用';
+      let reason = '風險成分 0-2 顆，可用';
+      if(riskyCount >= 4){ status = '高風險'; reason = '風險成分超過 3 顆，建議重生'; }
+      else if(riskyCount === 3){ status = '可觀察'; reason = '風險成分 2-3 顆，可觀察使用'; }
+      const reasonBits = [];
+      const hotCount = group.nums.filter((n)=>hot.has(n)).length;
+      const warmCount = group.nums.filter((n)=>warm.has(n)).length;
+      if(hotCount) reasonBits.push(`熱號 ${hotCount} 顆`);
+      if(warmCount) reasonBits.push(`中熱 ${warmCount} 顆`);
+      if(pairHits.length) reasonBits.push(`高風險雙連 ${pairHits.map((k)=>k.replaceAll('-', '、')).join(' / ')}`);
+      if(tripleHits.length) reasonBits.push(`高風險三連 ${tripleHits.map((k)=>k.replaceAll('-', '、')).join(' / ')}`);
+      return { idx: group.idx, nums: group.nums, riskyCount, status, reason, reasonDetail: reasonBits.length ? reasonBits.join('｜') : '未命中主要風險成分' };
     });
-
-    const totalPairExposure = metrics.reduce((sum, item)=>sum + item.pairExposure, 0);
-    const totalTripleExposure = metrics.reduce((sum, item)=>sum + item.tripleExposure, 0);
-    const totalPairHits = metrics.reduce((sum, item)=>sum + item.pairHits.length, 0);
-    const totalTripleHits = metrics.reduce((sum, item)=>sum + item.tripleHits.length, 0);
-    const riskyGroupCount = metrics.filter((item)=>item.riskScore >= 9).length;
-    const hotCounts = metrics.map((item)=>item.hotCount);
-    const hotSpread = hotCounts.length ? Math.max(...hotCounts) - Math.min(...hotCounts) : 0;
-    const fingerprintSpread = metrics.length ? Math.max(...metrics.map((item)=>item.fingerprintBucket)) - Math.min(...metrics.map((item)=>item.fingerprintBucket)) : 0;
-    const scoreSpread = metrics.length ? Math.max(...metrics.map((item)=>item.riskScore)) - Math.min(...metrics.map((item)=>item.riskScore)) : 0;
-    const stableGroupCount = metrics.filter((item)=>item.pairHits.length === 0 && item.tripleHits.length === 0 && item.riskScore < 8.5).length;
-    const riskyNumberCoverage = metrics.reduce((sum, item)=>sum + item.riskyNums.length, 0);
-    const heatAverage = metrics.length ? metrics.reduce((sum, item)=>sum + item.heatScore, 0) / metrics.length : 0;
-    const trendAverage = metrics.length ? metrics.reduce((sum, item)=>sum + item.trendScore, 0) / metrics.length : 0;
-    const drawCount = Number(analysis.evaluatedWindow || analysis.drawCount || 0);
-    const windowFactor = Math.min(drawCount, 100) / 100;
-    const fullSize = Number(row?.groups?.full?.length || 0);
-    const safest = metrics.slice().sort((a,b)=>a.riskScore - b.riskScore || a.heatScore - b.heatScore || a.idx - b.idx)[0];
-    const riskiest = metrics.slice().sort((a,b)=>b.riskScore - a.riskScore || b.heatScore - a.heatScore || a.idx - b.idx)[0];
-    const midRisk = metrics.slice().sort((a,b)=>b.riskScore - a.riskScore || b.hotCount - a.hotCount)[1];
-
-    let profile = '平衡型';
-    if(totalTripleHits >= 1 || totalTripleExposure >= 20) profile = '三碰撞警戒型';
-    else if(totalPairHits >= 2 || totalPairExposure >= 36) profile = '雙碰撞偏高型';
-    else if(hotSpread >= 3 || metrics.some((item)=>item.hotCount >= 4)) profile = '熱號偏斜型';
-    else if(stableGroupCount >= 3 && riskyNumberCoverage <= 5) profile = '均衡穩定型';
-    else if(heatAverage < 28 && riskyNumberCoverage <= 4) profile = '冷號保守型';
-    else if(trendAverage >= 6) profile = '轉熱承接型';
-
-    const baseRisk = totalTripleHits * 10 + totalPairHits * 4.5 + totalTripleExposure * 1.4 + totalPairExposure * 0.9 + riskyGroupCount * 5.2 + hotSpread * 2.2 + Math.max(0, riskyNumberCoverage - 5) * 1.3;
-    const stabilityBonus = stableGroupCount * 5.5 + Math.max(0, 2 - hotSpread) * 1.4 + (fullSize === 19 ? 2.5 : 0);
-    const passTendency = clampNum(90 - baseRisk + stabilityBonus + windowFactor * 5 - Math.max(0, scoreSpread - 5) * 0.6 + (safest ? Math.max(0, 5 - safest.riskScore) * 1.1 : 0), 18, 96);
-    const reliability = clampNum(38 + windowFactor * 28 + stableGroupCount * 6.5 + fingerprintSpread * 1.8 + Math.min(scoreSpread, 12) * 1.25 - totalTripleHits * 5.5 - totalPairHits * 2.2 - Math.max(0, riskyNumberCoverage - 6) * 1.4, 26, 92);
-
-    let riskLevel = '低';
-    if(baseRisk >= 34 || totalTripleHits >= 1 || totalTripleExposure >= 20 || (riskiest && riskiest.riskScore >= 14)) riskLevel = '高';
-    else if(baseRisk >= 18 || totalPairHits >= 1 || totalPairExposure >= 24 || hotSpread >= 2 || (riskiest && riskiest.riskScore >= 9.5)) riskLevel = '中';
-    riskLevel = `${riskLevel}｜${profile}`;
-
-    const bestReasons = [];
-    const worstReasons = [];
-    if(safest){
-      if(safest.tripleHits.length === 0 && safest.pairHits.length === 0) bestReasons.push('未撞高風險雙/三碰');
-      if(safest.hotCount <= 2) bestReasons.push(`熱號控制 ${safest.hotCount} 顆`);
-      if(safest.trendUpCount >= 1) bestReasons.push(`帶轉熱 ${safest.trendUpCount} 顆`);
-      if(safest.tailFocus <= 2 && safest.decadeFocus <= 2) bestReasons.push('尾數與十位分散');
-      if(!bestReasons.length) bestReasons.push(`暴露值 ${safest.riskScore.toFixed(1)}`);
-    }
-    if(riskiest){
-      if(riskiest.tripleHits.length) worstReasons.push(`含三碰撞 ${String(riskiest.tripleHits[0]).replaceAll('-', '、')}`);
-      if(!worstReasons.length && riskiest.pairHits.length) worstReasons.push(`含雙碰撞 ${String(riskiest.pairHits[0]).replaceAll('-', '、')}`);
-      if(riskiest.tailFocus >= 3) worstReasons.push(`尾數集中 ${riskiest.tailFocus}`);
-      if(riskiest.decadeFocus >= 3) worstReasons.push(`十位區集中 ${riskiest.decadeFocus}`);
-      if(riskiest.riskyNums.length >= 2) worstReasons.push(`風險號 ${riskiest.riskyNums.slice(0,3).join('、')}`);
-      if(!worstReasons.length) worstReasons.push(`暴露值 ${riskiest.riskScore.toFixed(1)}`);
-    }
-
-    let structureSummary = `四組熱/溫/中/冷：${metrics.map((item)=>`${item.hotCount}/${item.warmCount}/${item.midCount}/${item.coldCount}`).join('｜')}`;
-    if(profile === '均衡穩定型') structureSummary += '，大多數組別沒有撞到高風險雙/三碰。';
-    else if(profile === '熱號偏斜型') structureSummary += `，熱號落差 ${hotSpread}，熱區偏向少數組別。`;
-    else if(profile === '冷號保守型') structureSummary += '，冷號比例高，進攻性偏弱。';
-    else if(profile === '轉熱承接型') structureSummary += '，有帶近期升溫號，不是單純亂抽。';
-
-    let actionAdvice = '建議維持目前四組與全車配置，可直接觀察開獎。';
-    if(riskLevel.startsWith('高')) actionAdvice = `建議優先替換第${riskiest?.detail?.groupIndex || '?'}組，再重新生成一次較安全。`;
-    else if(riskLevel.startsWith('中')) actionAdvice = `建議保留第${safest?.detail?.groupIndex || '?'}組，並檢查第${riskiest?.detail?.groupIndex || '?'}組是否要換號。`;
-    else if(profile === '冷號保守型') actionAdvice = '整體偏保守，可直接追蹤；若要提高進攻性，可補 1 碼轉熱號。';
-    else if(profile === '轉熱承接型') actionAdvice = '這套不是純隨機，已帶近期升溫號；可直接追或只微調高風險組。';
-
-    const positives = [];
-    const negatives = [];
-    positives.push(`分析窗近 ${drawCount} 期，已同步熱號/雙連號/三連號/轉熱分布`);
-    if(safest) positives.push(`最佳組是第${safest.detail.groupIndex}組：${bestReasons.slice(0,4).join('、')}`);
-    if(stableGroupCount >= 2) positives.push(`低風險組共有 ${stableGroupCount} 組`);
-    positives.push(structureSummary);
-    if(riskiest) negatives.push(`優先留意第${riskiest.detail.groupIndex}組：${worstReasons.slice(0,4).join('、')}`);
-    if(midRisk && riskiest && midRisk.detail.groupIndex !== riskiest.detail.groupIndex && midRisk.riskScore >= 8.5) negatives.push(`次風險組第${midRisk.detail.groupIndex}組也偏高（${midRisk.structureType}）`);
-    negatives.push(`總雙號暴露 ${totalPairExposure}、總三號暴露 ${totalTripleExposure}`);
-    negatives.push(actionAdvice);
-
+    const highCount = details.filter((g)=>g.status === '高風險').length;
+    const watchCount = details.filter((g)=>g.status === '可觀察').length;
+    const usable = details.filter((g)=>g.status === '可用').length;
+    const best = details.slice().sort((a,b)=>a.riskyCount - b.riskyCount || a.idx - b.idx)[0];
+    const worst = details.slice().sort((a,b)=>b.riskyCount - a.riskyCount || a.idx - b.idx)[0];
     return {
-      trackingId: row?.id || apiRec?.trackingId || '',
-      passTendency: Number(passTendency.toFixed(1)),
-      reliability: Number(reliability.toFixed(1)),
-      riskLevel,
-      positives: Array.from(new Set(positives)).slice(0,4),
-      negatives: Array.from(new Set(negatives)).slice(0,4),
-      bestGroupText: safest ? `第${safest.detail.groupIndex}組較穩：${bestReasons.slice(0,3).join('、')}` : '',
-      riskGroupText: riskiest ? `第${riskiest.detail.groupIndex}組風險最高：${worstReasons.slice(0,3).join('、')}` : '',
-      structureSummary,
-      actionAdvice,
-      profile,
-      groupLineTexts: metrics.map(item => item.lineText)
+      trackingId: row?.id || '',
+      passTendency: Math.max(18, Math.min(96, 92 - highCount * 24 - watchCount * 10 - details.reduce((s,g)=>s+g.riskyCount,0) * 2 + usable * 6)),
+      riskLevel: `${highCount > 0 ? '高' : watchCount > 0 ? '中' : '低'}｜避中邏輯`,
+      reliability: Math.max(30, Math.min(90, 48 + Number(analysis.evaluatedWindow || analysis.drawCount || 0) * 0.25)),
+      positives: [`可用組 ${usable} 組`, best ? `最佳組為第${best.idx}組，風險成分 ${best.riskyCount} 顆` : '尚無最佳組', '主判定只看近100期熱號、中熱號與高風險雙連/三連'],
+      negatives: [highCount ? `高風險組 ${highCount} 組` : '目前無高風險組', watchCount ? `可觀察組 ${watchCount} 組` : '目前無可觀察組', worst ? `第${worst.idx}組風險成分最多（${worst.riskyCount} 顆）` : '尚無風險組'],
+      bestGroupText: best ? `第${best.idx}組｜${best.nums.join('、')}｜風險成分 ${best.riskyCount} 顆` : '尚無',
+      riskGroupText: worst ? `第${worst.idx}組｜${worst.nums.join('、')}｜風險成分 ${worst.riskyCount} 顆` : '尚無',
+      structureSummary: `四組風險成分：${details.map((g)=>`第${g.idx}組${g.riskyCount}顆`).join('｜')}`,
+      actionAdvice: highCount > 0 ? `建議優先重生第${worst?.idx || '?'}組，再觀察其餘組。` : watchCount > 0 ? `建議先保留可用組，補強第${worst?.idx || '?'}組。` : '四組風險成分偏低，可直接使用。',
+      profile: highCount > 0 ? '高風險' : watchCount > 0 ? '可觀察' : '可用',
+      groupLineTexts: details.map((g)=>`第${g.idx}組【${g.status}】${g.nums.join(' ')}｜風險成分 ${g.riskyCount} 顆｜${g.reasonDetail}`)
     };
   }
 
