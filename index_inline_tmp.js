@@ -1,3 +1,4 @@
+
 (() => {
   const $ = (id) => document.getElementById(id);
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -332,7 +333,8 @@ function makeSearchCard(name, idx){
   const wrap = document.createElement('div');
   wrap.className = 'searchGroupCard';
   wrap.id = `searchCard_${idx}`;
-  wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div>`;
+  const actionText = idx < 4 ? '鎖定本組' : '自動補滿';
+  wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div><div class="btns" style="margin-top:10px;"><button type="button" class="secondary" id="searchLockBtn_${idx}" data-idx="${idx}" style="display:${idx < 4 ? 'inline-flex' : 'none'};">${actionText}</button></div>`;
   return wrap;
 }
 
@@ -356,7 +358,9 @@ function openSearchOverlay(id){
   els.stage.textContent = '初始化';
   els.elapsed.textContent = '0.0 秒';
   els.eta.textContent = '約 1 秒';
-  els.footer.textContent = '會依序鎖定第一組、第二組、第三組、第四組與全車號碼。';
+  els.footer.textContent = '先看每組可行性；可用的組再由你手動鎖定，之後只重生未鎖定組。';
+  if($('searchRerunBtn')) $('searchRerunBtn').disabled = true;
+  if($('searchConfirmBtn')) $('searchConfirmBtn').disabled = true;
   els.overlay.classList.add('show');
   els.overlay.style.pointerEvents = 'auto';
   els.overlay.setAttribute('aria-hidden','false');
@@ -397,28 +401,149 @@ function updateSearchOverlay(id, progress){
   els.footer.textContent = progress?.footerText || '系統正在避開高風險雙號 / 三連號，並拆散熱號到不同組別。';
 }
 
-async function lockSearchResult(id, bestResult){
-  const names = Object.keys(bestResult.groups || {});
+function getGroupNamesForLottery(id){
+  return [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組',
+    $(`${id}_prize5Desc`).value.trim() || '全車號碼'
+  ];
+}
+
+function getLockedGroupCount(id){
+  return Object.keys(getLockedGroupMap(id) || {}).filter(k => Array.isArray(getLockedGroupMap(id)[k]) && getLockedGroupMap(id)[k].length === 5).length;
+}
+
+function rebuildFullFromLocked(id){
+  const s = state.lotteries[id];
+  const names = getGroupNamesForLottery(id);
+  const locks = getLockedGroupMap(id);
+  const used = new Set();
+  for(let i=1;i<=4;i++){ (locks[i] || []).forEach(n => used.add(n)); }
+  const allNums = Array.from({length:s.cfg.maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+  const full = allNums.filter(n => !used.has(n)).slice(0, 19);
+  if(!s.generatedGroups) s.generatedGroups = { groups: {} };
+  if(!s.generatedGroups.groups) s.generatedGroups.groups = {};
+  for(let i=1;i<=4;i++){ if(Array.isArray(locks[i]) && locks[i].length===5) s.generatedGroups.groups[names[i-1]] = locks[i].slice(); }
+  s.generatedGroups.groups[names[4]] = full;
+  fillManualFieldsFromPlan(id, s.generatedGroups.groups);
+  renderGroupPreview(id, s.generatedGroups);
+  return full;
+}
+
+function applySearchOverlayResult(id, bestResult){
+  const names = getGroupNamesForLottery(id);
+  const details = bestResult.groupDetails || [];
+  const locks = getLockedGroupMap(id);
   searchAnimState.locked = true;
   searchAnimState.running = false;
+  searchAnimState.currentLotteryId = id;
+  searchAnimState.latestResult = bestResult;
   const els = getSearchEls();
-  els.pill.textContent = '已找到';
-  for(let i=0;i<names.length;i++){
-    const cardEl = $(`searchCard_${i}`); const numsEl = $(`searchNums_${i}`); const hintEl = $(`searchHint_${i}`); const badgeEl = $(`searchBadge_${i}`);
-    const nums = bestResult.groups[names[i]] || [];
-    if(cardEl){ cardEl.classList.remove('active'); cardEl.classList.add('locked'); }
-    if(numsEl){ numsEl.classList.remove('spinPulse'); numsEl.textContent = nums.join('、'); }
-    if(hintEl){ hintEl.textContent = i < 4 ? '已鎖定，可直接確認通報' : '全車號碼已鎖定'; }
-    if(badgeEl){ badgeEl.textContent = '已鎖定'; }
-    updateSearchOverlay(id, { searched: i+1, target: 5, elapsedMs: Date.now()-searchAnimState.lastStep, stageLabel: `已鎖定 ${names[i]}`, statusText: '生成完成', footerText: '全部組別已鎖定完成，現在可以直接按「確認通報」。' });
-    await sleep(180);
+  els.pill.textContent = bestResult.canNotify ? '可用候選' : '候選完成';
+  for(let i=0;i<5;i++) {
+    const cardEl = $(`searchCard_${i}`); const numsEl = $(`searchNums_${i}`); const hintEl = $(`searchHint_${i}`); const badgeEl = $(`searchBadge_${i}`); const lockBtn = $(`searchLockBtn_${i}`);
+    const nums = (bestResult.groups && bestResult.groups[names[i]]) ? bestResult.groups[names[i]] : [];
+    const detail = details[i] || null;
+    const isLocked = i < 4 && Array.isArray(locks[i+1]) && locks[i+1].length === 5;
+    if(cardEl){ cardEl.classList.remove('active'); cardEl.classList.toggle('locked', isLocked); }
+    if(numsEl){ numsEl.classList.remove('spinPulse'); numsEl.textContent = nums.length ? nums.join('、') : (i < 4 ? '--、--、--、--、--' : '--、--、--'); }
+    if(badgeEl){ badgeEl.textContent = isLocked ? '已鎖定' : (detail?.status || (i < 4 ? '候選' : '待補滿')); }
+    if(hintEl){
+      if(i >= 4){
+        hintEl.textContent = getLockedGroupCount(id) >= 4 ? '全車號碼會以剩餘 19 顆自動補滿' : '等四組鎖定完成後，自動補滿剩餘 19 顆';
+      } else if(isLocked){
+        hintEl.textContent = '此組已鎖定；再次生成時會保留';
+      } else if(detail){
+        hintEl.textContent = `${detail.reason || detail.status}｜風險差 ${detail.riskyCount || 0}`;
+      } else {
+        hintEl.textContent = '可查看本組後決定是否鎖定';
+      }
+    }
+    if(lockBtn){
+      if(i < 4){
+        const canLock = !isLocked && detail && (detail.status === '可用' || detail.status === '偏熱' || detail.status === '需留意');
+        lockBtn.style.display = 'inline-flex';
+        lockBtn.disabled = !canLock;
+        lockBtn.textContent = isLocked ? '已鎖定' : '鎖定本組';
+      } else {
+        lockBtn.style.display = 'none';
+      }
+    }
   }
-  els.pill.textContent = '可通報';
-  els.stage.textContent = '全部鎖定完成';
+  const lockedCount = getLockedGroupCount(id);
+  if(lockedCount >= 4){
+    rebuildFullFromLocked(id);
+    els.pill.textContent = '可通報';
+    els.stage.textContent = '四組已全部鎖定';
+    els.footer.textContent = '四組已鎖定完成；全車號碼已自動補上剩餘 19 顆，現在可以確認通報。';
+    if($('searchConfirmBtn')) $('searchConfirmBtn').disabled = false;
+    if($('searchRerunBtn')) $('searchRerunBtn').disabled = true;
+    setConfirmAvailability(id, true, '四組已鎖定完成');
+  } else {
+    els.stage.textContent = `目前已鎖定 ${lockedCount} 組`;
+    els.footer.textContent = lockedCount > 0 ? `已鎖定 ${lockedCount} 組；按「重生未鎖定」只會重跑剩下的組。` : '請先鎖定你要保留的組，再重生其他組。';
+    if($('searchConfirmBtn')) $('searchConfirmBtn').disabled = true;
+    if($('searchRerunBtn')) $('searchRerunBtn').disabled = false;
+    setConfirmAvailability(id, false, '請先鎖定四組後再通報');
+  }
+}
+
+function lockCandidateGroupFromOverlay(id, groupIndex){
+  const s = state.lotteries[id];
+  const names = getGroupNamesForLottery(id);
+  const result = searchAnimState.latestResult || s.generatedGroups;
+  const nums = result?.groups?.[names[groupIndex-1]] || [];
+  if(!Array.isArray(nums) || nums.length !== 5){
+    showMiniNotice(`${s.cfg.title}：這組沒有有效 5 顆號碼，無法鎖定`, 'warn');
+    return;
+  }
+  if(!s.smartLocks) s.smartLocks = {};
+  s.smartLocks[groupIndex] = nums.slice();
+  if(!s.generatedGroups) s.generatedGroups = result || { groups: {} };
+  if(!s.generatedGroups.groups) s.generatedGroups.groups = {};
+  s.generatedGroups.groups[names[groupIndex-1]] = nums.slice();
+  persistAll();
+  applySearchOverlayResult(id, result);
+  showMiniNotice(`${s.cfg.title}：已鎖定第${groupIndex}組`, 'ok');
+}
+
+function rerunUnlockedGroupsFromOverlay(){
+  const id = searchAnimState.currentLotteryId;
+  if(!id) return;
+  closeGenerationPreview();
+  $(`${id}_btnGenerateSmart`)?.click();
+}
+
+function confirmLockedPlanFromOverlay(){
+  const id = searchAnimState.currentLotteryId;
+  if(!id) return;
+  const lockedCount = getLockedGroupCount(id);
+  if(lockedCount < 4){
+    showMiniNotice(`${state.lotteries[id].cfg.title}：請先鎖定四組，再確認通報`, 'warn');
+    return;
+  }
+  closeSearchOverlay(true);
+  $(`${id}_btnConfirmTracking`)?.click();
+}
+
+async function lockSearchResult(id, bestResult){
+  applySearchOverlayResult(id, bestResult);
 }
 
 $("searchCloseBtn").addEventListener("click", ()=>closeSearchOverlay());
-$("searchOverlay").addEventListener("click", (e)=>{ if(e.target.id === "searchOverlay") closeSearchOverlay(); });
+$("searchRerunBtn")?.addEventListener("click", ()=>rerunUnlockedGroupsFromOverlay());
+$("searchConfirmBtn")?.addEventListener("click", ()=>confirmLockedPlanFromOverlay());
+$("searchOverlay").addEventListener("click", (e)=>{
+  if(e.target.id === "searchOverlay") closeSearchOverlay();
+  const btn = e.target.closest('[id^="searchLockBtn_"]');
+  if(btn){
+    const idx = parseInt(btn.dataset.idx, 10);
+    const id = searchAnimState.currentLotteryId;
+    if(id && Number.isInteger(idx)) lockCandidateGroupFromOverlay(id, idx + 1);
+  }
+});
 
 function cleanupNumbers(arr, maxNum){
     return [...new Set(
@@ -504,6 +629,7 @@ function cleanupNumbers(arr, maxNum){
       lastAction: null,
       historyAnalysis: null,
       generatedGroups: null,
+      smartLocks: {},
       autoRefreshEnabled: true,
       rolling: false,
       lastSyncHash: "",
@@ -1294,6 +1420,7 @@ function cleanupNumbers(arr, maxNum){
 
   
   async function buildSmartGroups(id, analysis, onProgress){
+  const stateLocks = getLockedGroupMap(id);
     const startedAt = Date.now();
     const target = 1;
     if (typeof onProgress === 'function') onProgress({ searched: 0, target, elapsedMs: 0, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布直接生成方案。` });
@@ -2372,43 +2499,33 @@ function formatEta(ms){
 
   async function submitManualTracking(id){
     const s = state.lotteries[id];
-    const manualSourceInput = $(`${id}_manualSource`);
-    const sourceName = String((manualSourceInput?.value ?? manualSourceInput?.getAttribute('value') ?? '')).trim() || '手動追蹤';
-    const parsed = {
-      group1: parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), s.cfg.maxNum),
-      group2: parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), s.cfg.maxNum),
-      group3: parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), s.cfg.maxNum),
-      group4: parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum),
-      full: parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum)
-    };
-    const fallback = getCurrentPlanGroupsForManual(id) || {};
-    const normalizedGroups = {
-      group1: parsed.group1.length === 5 ? parsed.group1 : (Array.isArray(fallback.group1) && fallback.group1.length === 5 ? fallback.group1 : parsed.group1),
-      group2: parsed.group2.length === 5 ? parsed.group2 : (Array.isArray(fallback.group2) && fallback.group2.length === 5 ? fallback.group2 : parsed.group2),
-      group3: parsed.group3.length === 5 ? parsed.group3 : (Array.isArray(fallback.group3) && fallback.group3.length === 5 ? fallback.group3 : parsed.group3),
-      group4: parsed.group4.length === 5 ? parsed.group4 : (Array.isArray(fallback.group4) && fallback.group4.length === 5 ? fallback.group4 : parsed.group4),
-      full: parsed.full.length === 19 ? parsed.full : (Array.isArray(fallback.full) && fallback.full.length === 19 ? fallback.full : parsed.full)
-    };
-    [['manualGroup1', normalizedGroups.group1], ['manualGroup2', normalizedGroups.group2], ['manualGroup3', normalizedGroups.group3], ['manualGroup4', normalizedGroups.group4], ['manualFull', normalizedGroups.full]].forEach(([field, vals])=>{
-      const input = $(`${id}_${field}`);
-      if(input && Array.isArray(vals) && vals.length) input.value = vals.join(' ');
-    });
-    const groups = [normalizedGroups.group1, normalizedGroups.group2, normalizedGroups.group3, normalizedGroups.group4];
-    const sizes = groups.map(g => Array.isArray(g) ? g.length : 0);
-    if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
-      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼（目前 ${sizes.join('/')}）`, 'warn');
+    const sourceName = ($(`${id}_manualSource`)?.value || '').trim();
+    const group1 = parseManualGroupInput(($(`${id}_manualGroup1`)?.value || ''), s.cfg.maxNum);
+    const group2 = parseManualGroupInput(($(`${id}_manualGroup2`)?.value || ''), s.cfg.maxNum);
+    const group3 = parseManualGroupInput(($(`${id}_manualGroup3`)?.value || ''), s.cfg.maxNum);
+    const group4 = parseManualGroupInput(($(`${id}_manualGroup4`)?.value || ''), s.cfg.maxNum);
+    const full = parseManualGroupInput(($(`${id}_manualFull`)?.value || ''), s.cfg.maxNum);
+    if(!sourceName){
+      showMiniNotice(`${s.cfg.title}：請先輸入通報名稱`, 'warn');
       return;
     }
-    if(new Set(groups.flat()).size !== groups.flat().length){
+    const groups = [group1, group2, group3, group4];
+    if(groups.some(g => g.length !== 5 || new Set(g).size !== 5)){
+      showMiniNotice(`${s.cfg.title}：手動第一組到第四組都需輸入 5 顆不重複號碼`, 'warn');
+      return;
+    }
+    const merged = groups.flat();
+    if(new Set(merged).size !== merged.length){
       showMiniNotice(`${s.cfg.title}：手動第一組到第四組之間不可重複`, 'warn');
       return;
     }
-    if(normalizedGroups.full.length !== 19 || new Set(normalizedGroups.full).size !== 19){
-      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼（目前 ${normalizedGroups.full.length} 顆）`, 'warn');
+    if(full.length !== 19 || new Set(full).size !== 19){
+      showMiniNotice(`${s.cfg.title}：全車號碼需輸入 19 顆不重複號碼`, 'warn');
       return;
     }
     try{
-      const result = await postJsonApi('/api/manual-tracking', {
+      const normalizedGroups = { group1, group2, group3, group4, full };
+      const res = await fetch(`${API_BASE}/api/manual-tracking`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2420,38 +2537,19 @@ function formatEta(ms){
           analysis: buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null)
         })
       });
-  function parseManualGroupInput(value, maxNum){
-    const matches = String(value || '').match(/\d{1,2}/g) || [];
-    return matches
-      .map(n => parseInt(n,10))
-      .filter(n => Number.isInteger(n) && n >= 1 && n <= maxNum)
-      .map(n => String(n).padStart(2,'0'));
-  }
-
-function getCurrentPlanGroupsForManual(id){
-  const s = state.lotteries[id] || {};
-  const plan = s.generatedGroups && s.generatedGroups.groups ? s.generatedGroups.groups : null;
-  if(!plan) return null;
-  const names = [
-    $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
-    $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
-    $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
-    $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
-    $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
-  ];
-  return {
-    group1: Array.isArray(plan[names[0]]) ? plan[names[0]] : [],
-    group2: Array.isArray(plan[names[1]]) ? plan[names[1]] : [],
-    group3: Array.isArray(plan[names[2]]) ? plan[names[2]] : [],
-    group4: Array.isArray(plan[names[3]]) ? plan[names[3]] : [],
-    full: Array.isArray(plan[names[4]]) ? plan[names[4]] : []
-  };
-}
+      const result = await res.json().catch(()=>null);
+      if(!res.ok || !result?.ok) throw new Error(result?.message || `HTTP ${res.status}`);
+      const fullCount = result?.validation?.groupSizes?.full || full.length;
+      showMiniNotice(`${s.cfg.title}：${result.message || '已新增手動追蹤'}（全車 ${fullCount} 顆）`, 'ok');
+      ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
+        if($(`${id}_${key}`)) $(`${id}_${key}`).value = '';
+      });
       await refreshTrackingBoard(id, { silent: true });
     }catch(err){
       showMiniNotice(`${s.cfg.title}：手動追蹤失敗：${err.message || '未知錯誤'}`, 'warn');
     }
   }
+
   function parseManualGroupInput(value, maxNum){
     return cleanupInput(String(value || '').split(/[^\d]+/), 'digits')
       .map(n => parseInt(n,10))
@@ -2459,7 +2557,45 @@ function getCurrentPlanGroupsForManual(id){
       .map(n => String(n).padStart(2,'0'));
   }
 
+  function getLockedGroupMap(id){
+    return state.lotteries[id].smartLocks || {};
+  }
 
+  function setLockedGroupsFromPreview(id, preview){
+    const s = state.lotteries[id];
+    const nextLocks = Object.assign({}, s.smartLocks || {});
+    (preview?.groups || []).forEach(g=>{
+      if(g && (g.status === '可用' || g.status === '偏熱') && Array.isArray(g.nums) && g.nums.length === 5){
+        nextLocks[g.idx] = g.nums.slice();
+      }
+    });
+    s.smartLocks = nextLocks;
+    return nextLocks;
+  }
+
+  function clearLockedGroups(id){
+    state.lotteries[id].smartLocks = {};
+  }
+
+  function getCurrentPlanGroupsForManual(id){
+    const s = state.lotteries[id] || {};
+    const plan = s.generatedGroups && s.generatedGroups.groups ? s.generatedGroups.groups : null;
+    if(!plan) return null;
+    const names = [
+      $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
+      $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
+      $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
+      $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
+      $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
+    ];
+    return {
+      group1: Array.isArray(plan[names[0]]) ? plan[names[0]] : [],
+      group2: Array.isArray(plan[names[1]]) ? plan[names[1]] : [],
+      group3: Array.isArray(plan[names[2]]) ? plan[names[2]] : [],
+      group4: Array.isArray(plan[names[3]]) ? plan[names[3]] : [],
+      full: Array.isArray(plan[names[4]]) ? plan[names[4]] : []
+    };
+  }
 
 function pickRandom(list, used){
   const arr = list.filter(n => !used.has(n));
@@ -2997,6 +3133,7 @@ function buildCandidatePlanMetrics(mains, analysis){
 }
 
 async function buildSimpleGeneratedPlan(id, analysis, onProgress){
+  const stateLocks = getLockedGroupMap(id);
   const hot = (analysis.hot || []).slice(0, 8);
   const warm = (analysis.warm || []).slice(0, 14);
   const cold = (analysis.cold || []).slice(0, 8);
@@ -3014,6 +3151,13 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
   const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+  const lockedByIndex = {
+    1: Array.isArray(stateLocks[1]) ? stateLocks[1].slice() : null,
+    2: Array.isArray(stateLocks[2]) ? stateLocks[2].slice() : null,
+    3: Array.isArray(stateLocks[3]) ? stateLocks[3].slice() : null,
+    4: Array.isArray(stateLocks[4]) ? stateLocks[4].slice() : null
+  };
+  const lockedCount = Object.values(lockedByIndex).filter(v=>Array.isArray(v) && v.length===5).length;
   const candidateCount = 220;
   let qualified = null;
   let fallback = null;
@@ -3032,6 +3176,12 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     const used = new Set();
     const groups = {};
     for(let gi=0; gi<4; gi++){
+      const locked = lockedByIndex[gi+1];
+      if(Array.isArray(locked) && locked.length === 5){
+        groups[groupNames[gi]] = locked.slice().sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        locked.forEach(v=>used.add(v));
+        continue;
+      }
       let bestLocal = null;
       for(let localTry=0; localTry<10; localTry++){
         const localUsed = new Set(Array.from(used));
@@ -3083,7 +3233,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   function optimizeCandidatePack(seedGroups){
     let bestGroups = JSON.parse(JSON.stringify(seedGroups));
     let bestMetrics = buildCandidatePlanMetrics([bestGroups[groupNames[0]], bestGroups[groupNames[1]], bestGroups[groupNames[2]], bestGroups[groupNames[3]]], analysis);
-    for(let round=0; round<4; round++){
+    for(let round=0; round<6; round++){
       if(bestMetrics.canNotify) break;
       const ordered = bestMetrics.groupDetails.slice().sort((a,b)=>{
         const weight = { '高風險': 3, '需留意': 2, '偏熱': 1, '可用': 0 };
@@ -3092,7 +3242,9 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         return (b.score||0) - (a.score||0);
       });
       let mutated = false;
-      for(const detail of ordered.slice(0, 2)){
+      const locked = new Set([1,2,3,4].filter(i => Array.isArray(lockedByIndex[i]) && lockedByIndex[i].length === 5));
+      bestMetrics.groupDetails.filter(g => g.status === '可用' && g.score <= 8.8).forEach(g => locked.add(g.index));
+      for(const detail of ordered.filter(g => !locked.has(g.index)).slice(0, 2)){
         const targetName = groupNames[detail.index - 1];
         const fixedUsed = new Set();
         for(let gi=0; gi<4; gi++){
@@ -3102,7 +3254,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         }
         let bestLocalGroups = null;
         let bestLocalMetrics = null;
-        for(let localTry=0; localTry<6; localTry++){
+        for(let localTry=0; localTry<8; localTry++){
           const localUsed = new Set(Array.from(fixedUsed));
           const safeMid = shuffle((mid || []).filter(n=>!riskyNumbers.has(n) && !cold.includes(n)));
           const safeWarm = shuffle((warm || []).filter(n=>!riskyNumbers.has(n)));
@@ -3133,16 +3285,23 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   }
 
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
-    if(candidateIndex % 20 === 0){
+    if(searchAnimState.cancelRequested){ throw new Error('已取消生成'); }
+    if(candidateIndex % 10 === 0){
       if(typeof onProgress === "function") onProgress({ searched: candidateIndex, target: candidateCount, elapsedMs: candidateIndex * 6, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: "生成中", footerText: "系統正在分批尋找較乾淨的候選方案…" });
-      await sleep(0);
+      await sleep(8);
     }
     const used = new Set();
     const groups = {};
     let valid = true;
     for(let gi=0; gi<4; gi++){
+      const locked = lockedByIndex[gi+1];
+      if(Array.isArray(locked) && locked.length === 5){
+        groups[groupNames[gi]] = locked.slice().sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+        locked.forEach(v=>used.add(v));
+        continue;
+      }
       let attemptBest = null;
-      for(let localTry=0; localTry<6; localTry++){
+      for(let localTry=0; localTry<8; localTry++){
         const localUsed = new Set(Array.from(used));
         const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
         if(proposed.length < 5) continue;
@@ -3250,6 +3409,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   renderHistoryAnalysis(id, analysis);
 
   const btn = $(`${id}_btnGenerateSmart`);
+  const existingLocks = Object.values(getLockedGroupMap(id)).filter(v=>Array.isArray(v) && v.length===5).length;
   btn.disabled = true;
   const originalText = btn.textContent;
   btn.textContent = '生成中...';
@@ -3263,10 +3423,9 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     state.lotteries[id].generatedGroups = bestResult;
     await lockSearchResult(id, bestResult);
     renderGroupPreview(id, bestResult);
-    applyGeneratedGroupsToLog(id, bestResult.groups);
-    setConfirmAvailability(id, true);
-    openGenerationPreview(id, bestResult, analysis);
-    showMiniNotice(bestResult.canNotify === false ? `${state.lotteries[id].cfg.title}：本輪沒有找到合格方案，請依預覽決定是否重生` : `${state.lotteries[id].cfg.title}：已生成方案，請先看分析再決定是否通報`, bestResult.canNotify === false ? 'warn' : 'ok');
+    fillManualFieldsFromPlan(id, bestResult.groups);
+    const lockedNow = getLockedGroupCount(id);
+    showMiniNotice(`${state.lotteries[id].cfg.title}：已生成候選方案，請在生成視窗中鎖定可用組，再重生未鎖定組`, bestResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
     console.error(err);
     state.lotteries[id].generatedGroups = null;
@@ -3315,7 +3474,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
       input.addEventListener("focus", handler);
       input.addEventListener("click", handler);
       input.addEventListener("input", ()=>{
-        input.value = parseManualGroupInput(input.value || '', 39).join(' ');
+        input.value = parseManualGroupInput(input.value || '', state.lotteries[id].cfg.maxNum).join(' ');
         persistAll();
       });
     });
@@ -3812,6 +3971,7 @@ async function confirmLatestGenerationPreview(){
   if(!p.preview?.canNotify){ showMiniNotice('本輪方案尚未通過整套驗收，請重新生成', 'warn'); return; }
   closeGenerationPreview();
   await confirmTracking(p.lotteryId);
+  clearLockedGroups(p.lotteryId);
 }
 
 function openBroadcastCenter(){
