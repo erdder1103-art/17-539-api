@@ -737,7 +737,7 @@ function buildUnifiedTrackingSummary(tracking) {
     riskLevel = '中';
     actionAdvice = `建議先保留可用組，補強第${worst.idx}組。`;
   }
-  const passTendency = Math.max(18, Math.min(96, 92 - highCount * 24 - watchCount * 10 - detailList.reduce((s, g) => s + g.riskComponentCount, 0) * 2 + usable * 6));
+  const passTendency = Math.max(18, Math.min(96, 90 - highCount * 18 - watchCount * 8 - detailList.reduce((sum, g) => sum + g.riskComponentCount, 0) * 2 + usable * 6));
   const reliability = Math.max(30, Math.min(90, 48 + Number(analysis.evaluatedWindow || analysis.drawCount || 0) * 0.25));
   const structureSummary = `四組風險成分：${detailList.map((g) => `第${g.idx}組${g.riskComponentCount}顆`).join('｜')}`;
   const groupLineTexts = detailList.map((g) => `第${g.idx}組【${g.status}】${g.nums.join(' ')}｜風險成分 ${g.riskComponentCount} 顆｜${g.reasonDetail}`);
@@ -755,8 +755,8 @@ function buildUnifiedTrackingSummary(tracking) {
     riskLevel: `${riskLevel}｜避中邏輯`,
     passTendency: Number(passTendency.toFixed(1)),
     reliability: Number(reliability.toFixed(1)),
-    bestGroupText: best ? `第${best.idx}組｜${best.nums.join('、')}｜風險成分 ${best.riskComponentCount} 顆` : '尚無',
-    riskGroupText: worst ? `第${worst.idx}組｜${worst.nums.join('、')}｜風險成分 ${worst.riskComponentCount} 顆` : '尚無',
+    bestGroupText: best ? `第${best.idx}組｜${best.nums.join('、')}｜${best.status}` : '尚無',
+    riskGroupText: worst ? `第${worst.idx}組｜${worst.nums.join('、')}｜${worst.status}` : '尚無',
     structureSummary,
     actionAdvice,
     groupLineTexts,
