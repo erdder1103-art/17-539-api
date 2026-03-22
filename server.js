@@ -6,8 +6,8 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 const path = require('path');
 const { confirmTracking, confirmManualTracking, cancelTracking, getTrackingOverview, recalculateTrackingAnalysis } = require('./trackingService');
-const { getActiveTrackings } = require('./trackingStore');
-const { processTrackingResult, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
+const { getActiveTrackings, getTrackingById } = require('./trackingStore');
+const { processTrackingResult, processTrackingNow, getResultHistory, getLearningState, getRecommendations, getRangeSummary, compareActiveTrackings, buildNextIssue } = require('./resultService');
 const { buildWeeklySummaryText, getWeeklyStats } = require('./weekStats');
 const { formatTaipeiDateTime } = require('./utils/time');
 const { getBotRuntimeSummary, testTelegramSend, callTelegram, broadcastTelegramMessage } = require('./telegram');
@@ -201,6 +201,12 @@ function getLatestIssueByType(type) {
   const list = key === 'ttl' ? cacheTTL : cache539;
   return list[0] ? String(list[0].issue || '') : '';
 }
+function getLatestDrawByType(type) {
+  const key = type === 'ttl' ? 'ttl' : '539';
+  const list = key === 'ttl' ? cacheTTL : cache539;
+  return list[0] || null;
+}
+
 function withIssueContext(body = {}) {
   const lotteryType = body.lotteryType === 'ttl' ? 'ttl' : '539';
   const latestIssue = getLatestIssueByType(lotteryType);
@@ -209,7 +215,7 @@ function withIssueContext(body = {}) {
     lotteryType,
     latestIssue,
     baseIssue: body.baseIssue || latestIssue,
-    startFromIssue: body.startFromIssue || buildNextIssue(body.baseIssue || latestIssue)
+    startFromIssue: body.startFromIssue || (body.baseIssue || latestIssue)
   };
 }
 
@@ -297,6 +303,24 @@ app.post('/api/tracking/recalculate', (req, res) => {
   try { res.json(recalculateTrackingAnalysis(req.body || {})); }
   catch (err) { res.status(400).json({ ok: false, message: err.message || '重算分析失敗' }); }
 });
+app.post('/api/tracking/check-now', async (req, res) => {
+  try {
+    const lotteryType = req.body && req.body.lotteryType === 'ttl' ? 'ttl' : '539';
+    const trackingId = String((req.body && req.body.trackingId) || '').trim();
+    if (!trackingId) throw new Error('缺少 trackingId');
+    const tracking = getActiveTrackings(lotteryType).find((row) => String(row.id || '') === trackingId);
+    if (!tracking) throw new Error('找不到待開獎追蹤');
+    const latest = getLatestDrawByType(lotteryType);
+    if (!latest || !Array.isArray(latest.numbers) || latest.numbers.length !== 5) throw new Error('目前沒有可用開獎資料');
+    const title = lotteryType === 'ttl' ? '天天樂' : '539';
+    const issueKey = `${latest.issue}|${latest.date}|${latest.numbers.join('-')}`;
+    const result = await processTrackingNow(tracking, lotteryType, title, latest.numbers, issueKey);
+    res.json({ ok: true, trackingId, latestIssue: latest.issue, issueKey, result, message: `${title} 已立即核對本期 ${latest.issue}` });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '立即核對失敗' });
+  }
+});
+
 app.get('/api/learning/:type', (req, res) => res.json({ ok: true, learning: getLearningState(req.params.type) }));
 app.get('/api/recommend/:type', (req, res) => res.json(getRecommendations(req.params.type)));
 

@@ -139,7 +139,7 @@ function validateManualPayload(payload) {
 function buildTrackingRecord(input) {
   const now = formatTaipeiDateTime();
   const baseIssue = String(input.baseIssue || '').trim();
-  const startFromIssue = String(input.startFromIssue || buildNextIssue(baseIssue) || '').trim();
+  const startFromIssue = String(input.startFromIssue || baseIssue || buildNextIssue(baseIssue) || '').trim();
   return {
     id: `${input.lotteryType}_${input.trackType}_${nowIsoId()}`,
     lotteryType: input.lotteryType,
@@ -373,10 +373,15 @@ async function cancelTracking(payload) {
 
 function getTrackingOverview(lotteryType) {
   const active = getActiveTrackings(lotteryType).map((row) => maybeRebuildTrackingAnalysis(lotteryType, row));
+  const history = getTrackingHistory(lotteryType, TRACKING_HISTORY_LIMIT);
+  const completed = history.filter((row) => row && row.status === 'completed');
+  const cancelled = history.filter((row) => row && row.status === 'cancelled');
   return {
     ok: true,
     active,
-    history: getTrackingHistory(lotteryType, TRACKING_HISTORY_LIMIT),
+    history,
+    completed,
+    cancelled,
     message: active.length ? `目前共有 ${active.length} 筆待開獎追蹤` : '目前沒有待開獎追蹤'
   };
 }

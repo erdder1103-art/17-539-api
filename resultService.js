@@ -1049,6 +1049,58 @@ function compareActiveTrackings(lotteryType) {
   };
 }
 
+async function processSingleTrackingResult(tracking, lotteryType, lotteryTitle, latestDraw, issueKey, history) {
+  const key = lotteryType === 'ttl' ? 'ttl' : '539';
+  const draw = latestDraw.map(pad2);
+  const currentIssue = parseIssue(issueKey);
+  const currentIssueNum = issueToNumber(currentIssue);
+  const drawDate = normalizeDateOnly(parseDrawDate(issueKey));
+  const startFromIssue = String(tracking.startFromIssue || '');
+  const startNum = issueToNumber(startFromIssue);
+  if (startNum && currentIssueNum < startNum) {
+    return { trackingId: tracking.id, skipped: true, reason: 'before_start_issue', startFromIssue, currentIssue };
+  }
+  const groups = { ...(tracking.groups || {}), __draw: draw };
+  const resultMap = buildResultMap(groups);
+  const evaluation = evaluateResult(resultMap);
+  const message = buildResultMessage(lotteryTitle, issueKey, draw, tracking, resultMap, evaluation.label);
+  await sendTelegramMessage(message, { timeoutMs: 8000 });
+  learnFromOutcome(key, tracking, draw, resultMap, evaluation);
+  history.push({
+    lotteryType: key,
+    lotteryTitle,
+    issue: currentIssue,
+    drawDate,
+    issueKey,
+    checkedAt: nowFull(),
+    draw,
+    resultMap,
+    finalLabel: evaluation.label,
+    trackingId: tracking.id || null,
+    trackType: tracking.trackType || 'system',
+    sourceType: tracking.trackType || 'system',
+    sourceName: tracking.sourceName || ''
+  });
+  settleTracking(key, tracking.id, {
+    issueKey,
+    issue: currentIssue,
+    drawDate,
+    draw,
+    resultMap,
+    finalLabel: evaluation.label,
+    checkedAt: nowFull()
+  });
+  return { trackingId: tracking.id, finalLabel: evaluation.label, resultMap, trackType: tracking.trackType || 'system' };
+}
+
+async function processTrackingNow(tracking, lotteryType, lotteryTitle, latestDraw, issueKey) {
+  if (!tracking) return { skipped: true, reason: 'no tracking' };
+  const history = readJson(RESULT_HISTORY_FILE, []);
+  const outcome = await processSingleTrackingResult(tracking, lotteryType, lotteryTitle, latestDraw, issueKey, history);
+  writeJson(RESULT_HISTORY_FILE, history);
+  return { ok: true, outcome };
+}
+
 async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issueKey) {
   const active = getActiveTrackings(lotteryType).map((tracking) => rebuildTrackingAnalysis(tracking, lotteryType));
   if (!Array.isArray(active) || !active.length) {
@@ -1063,56 +1115,11 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
     return { skipped: true, reason: 'already processed' };
   }
 
-  const draw = latestDraw.map(pad2);
   const history = readJson(RESULT_HISTORY_FILE, []);
   const outcomes = [];
-  const currentIssue = parseIssue(issueKey);
-  const currentIssueNum = issueToNumber(currentIssue);
-  const drawDate = normalizeDateOnly(parseDrawDate(issueKey));
 
   for (const tracking of active) {
-    const startFromIssue = String(tracking.startFromIssue || '');
-    const startNum = issueToNumber(startFromIssue);
-    if (startNum && currentIssueNum < startNum) {
-      outcomes.push({ trackingId: tracking.id, skipped: true, reason: 'before_start_issue', startFromIssue, currentIssue });
-      continue;
-    }
-
-    const groups = { ...(tracking.groups || {}), __draw: draw };
-    const resultMap = buildResultMap(groups);
-    const evaluation = evaluateResult(resultMap);
-    const message = buildResultMessage(lotteryTitle, issueKey, draw, tracking, resultMap, evaluation.label);
-
-    await sendTelegramMessage(message, { timeoutMs: 8000 });
-    learnFromOutcome(key, tracking, draw, resultMap, evaluation);
-
-    history.push({
-      lotteryType: key,
-      lotteryTitle,
-      issue: currentIssue,
-      drawDate,
-      issueKey,
-      checkedAt: nowFull(),
-      draw,
-      resultMap,
-      finalLabel: evaluation.label,
-      trackingId: tracking.id || null,
-      trackType: tracking.trackType || 'system',
-      sourceType: tracking.trackType || 'system',
-      sourceName: tracking.sourceName || ''
-    });
-
-    settleTracking(key, tracking.id, {
-      issueKey,
-      issue: currentIssue,
-      drawDate,
-      draw,
-      resultMap,
-      finalLabel: evaluation.label,
-      checkedAt: nowFull()
-    });
-
-    outcomes.push({ trackingId: tracking.id, finalLabel: evaluation.label, resultMap, trackType: tracking.trackType || 'system' });
+    outcomes.push(await processSingleTrackingResult(tracking, lotteryType, lotteryTitle, latestDraw, issueKey, history));
   }
 
   writeJson(RESULT_HISTORY_FILE, history);
@@ -1140,5 +1147,6 @@ module.exports = {
   issueToNumber,
   buildNextIssue,
   buildHistoryAnalysisFromRows,
-  rebuildTrackingAnalysis
+  rebuildTrackingAnalysis,
+  processTrackingNow
 };
