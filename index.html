@@ -4572,9 +4572,9 @@ function openGenerationPreview(id, bestResult, analysis){
 ${preview.best.reason}` : '尚無';
   if($('generationPreviewRisk')) $('generationPreviewRisk').textContent = preview.worst ? `第${preview.worst.idx}組｜${preview.worst.nums.join('、')}
 ${preview.worst.reason}` : '尚無';
-  if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = preview.groups.map(g=>`<div style="padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:14px;margin-top:8px;">`+
-    `<b>第${g.idx}組【${escapeHtml(g.status)}】</b> ${escapeHtml(g.nums.join('、'))}<br>`+
-    `<span class="small">${escapeHtml(g.reason)}${g.riskyCount ? `｜風險號 ${g.riskyCount}` : ''}${g.pairHits ? `｜雙碰 ${g.pairHits}` : ''}${g.tripleHits ? `｜三碰 ${g.tripleHits}` : ''}</span></div>`).join('');
+  if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = `
+    <div style="padding:12px 14px;border:1px solid rgba(255,255,255,.09);border-radius:14px;white-space:pre-wrap;line-height:1.8;">${escapeHtml(renderPreviewDetailedReport(preview) || '尚無分析')}</div>
+  `;
   const confirmBtn = $('generationPreviewConfirm');
   if(confirmBtn){
     confirmBtn.disabled = false;

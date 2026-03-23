@@ -3786,16 +3786,36 @@ function buildGenerationPreviewState(id, bestResult, analysis){
   } else if (highCount > 0) summary = `本輪可觀察：有 ${highCount} 組高風險，但你仍可直接通報或再生一次。`;
   else if (watchCount > 1) summary = `本輪有 ${watchCount} 組可觀察，可直接通報，或再生一次找更乾淨方案。`;
   else if (watchCount === 1) summary = '本輪可用，可直接通報。';
+  const fullFallback = Array.isArray(rawGroups.full) ? rawGroups.full : (Array.isArray(rawGroups['全車號碼']) ? rawGroups['全車號碼'] : []);
   const normalizedGroups = {
-    group1: fallbackMainGroups[0] || [],
-    group2: fallbackMainGroups[1] || [],
-    group3: fallbackMainGroups[2] || [],
-    group4: fallbackMainGroups[3] || [],
-    full: Array.isArray(groupsMap[allGroupKeys[4]]) ? groupsMap[allGroupKeys[4]].map(v=>String(v).padStart(2,'0')) : []
+    group1: (fallbackMainGroups[0] || []).map(v=>String(v).padStart(2,'0')),
+    group2: (fallbackMainGroups[1] || []).map(v=>String(v).padStart(2,'0')),
+    group3: (fallbackMainGroups[2] || []).map(v=>String(v).padStart(2,'0')),
+    group4: (fallbackMainGroups[3] || []).map(v=>String(v).padStart(2,'0')),
+    full: fullFallback.map(v=>String(v).padStart(2,'0'))
   };
   const analysisMeta = buildTrackingAnalysisMetaFromGroups(normalizedGroups, analysis || {});
   const rec = buildDisplayRecommendation({ id: '', groups: normalizedGroups, analysis: analysisMeta }, null);
   return { summary, best, worst, groups: groupRows, canNotify, packStatus, recommendation: rec };
+}
+
+function renderPreviewDetailedReport(preview){
+  const rec = preview?.recommendation || null;
+  const groups = Array.isArray(preview?.groups) ? preview.groups : [];
+  const summaryLines = [];
+  if(rec){
+    summaryLines.push(`通過傾向 ${Number(rec.passTendency || 0).toFixed(1)}%`);
+    summaryLines.push(`風險等級 ${String(rec.riskLevel || '-')}`);
+    summaryLines.push(`分析可信度 ${Number(rec.reliability || 0).toFixed(1)}`);
+    if(rec.bestGroupText) summaryLines.push(`最佳組：${rec.bestGroupText}`);
+    if(rec.riskGroupText) summaryLines.push(`風險組：${rec.riskGroupText}`);
+    if(rec.structureSummary) summaryLines.push(`結構：${rec.structureSummary}`);
+    if(rec.actionAdvice) summaryLines.push(`建議：${rec.actionAdvice}`);
+    if(Array.isArray(rec.positives) && rec.positives.length) summaryLines.push(`正向：${rec.positives.join('、')}`);
+    if(Array.isArray(rec.negatives) && rec.negatives.length) summaryLines.push(`風險：${rec.negatives.join('、')}`);
+  }
+  const groupLines = groups.map(g => `第${g.idx}組【${g.status}】 ${g.nums.join('、')}｜風險成分 ${g.riskyCount} 顆｜${g.reason}`);
+  return [...summaryLines, ...groupLines].join('\n');
 }
 
 function openGenerationPreview(id, bestResult, analysis){
@@ -3814,9 +3834,9 @@ function openGenerationPreview(id, bestResult, analysis){
 ${preview.best.reason}` : '尚無';
   if($('generationPreviewRisk')) $('generationPreviewRisk').textContent = preview.worst ? `第${preview.worst.idx}組｜${preview.worst.nums.join('、')}
 ${preview.worst.reason}` : '尚無';
-  if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = preview.groups.map(g=>`<div style="padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:14px;margin-top:8px;">`+
-    `<b>第${g.idx}組【${escapeHtml(g.status)}】</b> ${escapeHtml(g.nums.join('、'))}<br>`+
-    `<span class="small">${escapeHtml(g.reason)}${g.riskyCount ? `｜風險號 ${g.riskyCount}` : ''}${g.pairHits ? `｜雙碰 ${g.pairHits}` : ''}${g.tripleHits ? `｜三碰 ${g.tripleHits}` : ''}</span></div>`).join('');
+  if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = `
+    <div style="padding:12px 14px;border:1px solid rgba(255,255,255,.09);border-radius:14px;white-space:pre-wrap;line-height:1.8;">${escapeHtml(renderPreviewDetailedReport(preview) || '尚無分析')}</div>
+  `;
   const confirmBtn = $('generationPreviewConfirm');
   if(confirmBtn){
     confirmBtn.disabled = false;
@@ -3842,10 +3862,22 @@ function rerunLatestGenerationPreview(){
 async function confirmLatestGenerationPreview(){
   const p = state.lastGenerationPreview;
   if(!p || !p.lotteryId) return;
-  const ok = await confirmTracking(p.lotteryId);
-  if(ok){
-    closeGenerationPreview();
-    clearLockedGroups(p.lotteryId);
+  const btn = $('generationPreviewConfirm');
+  const oldText = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '通報中...'; }
+  try{
+    const ok = await confirmTracking(p.lotteryId);
+    if(ok){
+      showMiniNotice(`${state.lotteries[p.lotteryId].cfg.title}：通報成功`, 'ok');
+      closeGenerationPreview();
+      clearLockedGroups(p.lotteryId);
+    }else{
+      showMiniNotice(`${state.lotteries[p.lotteryId].cfg.title}：通報失敗，請檢查 TG 設定或稍後再試`, 'warn');
+    }
+  }catch(err){
+    showMiniNotice(`${state.lotteries[p.lotteryId].cfg.title}：通報失敗：${err.message || '未知錯誤'}`, 'warn');
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = oldText || '確認通報'; }
   }
 }
 
