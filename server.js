@@ -228,12 +228,17 @@ function getLatestIssueByType(type) {
 function withIssueContext(body = {}) {
   const lotteryType = body.lotteryType === 'ttl' ? 'ttl' : '539';
   const latestIssue = getLatestIssueByType(lotteryType);
+  const baseIssue = String(body.baseIssue || latestIssue || '').trim();
+  const explicitStart = String(body.startFromIssue || '').trim();
+  const nextIssue = buildNextIssue(baseIssue);
   return {
     ...body,
     lotteryType,
     latestIssue,
-    baseIssue: body.baseIssue || latestIssue,
-    startFromIssue: body.startFromIssue || (body.baseIssue || latestIssue)
+    baseIssue,
+    // 未指定時一律從「最新一期的下一期」生效，避免跨日 00:00 因日期切換而誤以為舊單失效。
+    // 追蹤只會在真正開出 startFromIssue 之後的新獎期被核對與結算，不會因為過午夜自動取消。
+    startFromIssue: explicitStart || nextIssue || baseIssue
   };
 }
 
