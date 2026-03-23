@@ -2166,10 +2166,18 @@ function formatEta(ms){
       group4: cleanupNumbers(groups[order[3]] || [], s.cfg.maxNum),
       full: cleanupNumbers(groups[order[4]] || [], s.cfg.maxNum)
     };
+    const previewSnapshot = buildGenerationPreviewState(id, { ...s.generatedGroups, groups: normalizedGroups }, s.historyAnalysis || null);
+    const analysisPayload = buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null);
+    analysisPayload.previewSummary = previewSnapshot.summary || '';
+    analysisPayload.previewReport = renderPreviewDetailedReport(previewSnapshot) || '';
+    analysisPayload.canNotify = !!previewSnapshot.canNotify;
+    analysisPayload.packStatus = previewSnapshot.packStatus || '';
+    analysisPayload.recommendation = previewSnapshot.recommendation || null;
     const payload = {
       lotteryType: id === "ttl" ? "ttl" : "539",
       lotteryTitle: s.cfg.title,
       confirmedAt: nowFull(),
+      sourceName: `${s.cfg.title} 系統方案`,
       groups: normalizedGroups,
       labels: {
         group1: order[0],
@@ -2178,7 +2186,7 @@ function formatEta(ms){
         group4: order[3],
         full: order[4]
       },
-      analysis: buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null)
+      analysis: analysisPayload
     };
 
     try{
@@ -3796,26 +3804,54 @@ function buildGenerationPreviewState(id, bestResult, analysis){
   };
   const analysisMeta = buildTrackingAnalysisMetaFromGroups(normalizedGroups, analysis || {});
   const rec = buildDisplayRecommendation({ id: '', groups: normalizedGroups, analysis: analysisMeta }, null);
-  return { summary, best, worst, groups: groupRows, canNotify, packStatus, recommendation: rec };
+  return { summary, best, worst, groups: groupRows, canNotify, packStatus, recommendation: rec, fullNumbers: normalizedGroups.full };
+}
+
+function formatPreviewHits(list){
+  if(!Array.isArray(list) || !list.length) return '無';
+  return list.join('、');
 }
 
 function renderPreviewDetailedReport(preview){
   const rec = preview?.recommendation || null;
   const groups = Array.isArray(preview?.groups) ? preview.groups : [];
-  const summaryLines = [];
+  const sections = [];
+  const header = [];
+  header.push(`整體結論：${preview?.summary || '尚無結論'}`);
+  header.push(`通報狀態：${preview?.canNotify ? '可直接通報' : (preview?.packStatus || '建議再觀察')}`);
   if(rec){
-    summaryLines.push(`通過傾向 ${Number(rec.passTendency || 0).toFixed(1)}%`);
-    summaryLines.push(`風險等級 ${String(rec.riskLevel || '-')}`);
-    summaryLines.push(`分析可信度 ${Number(rec.reliability || 0).toFixed(1)}`);
-    if(rec.bestGroupText) summaryLines.push(`最佳組：${rec.bestGroupText}`);
-    if(rec.riskGroupText) summaryLines.push(`風險組：${rec.riskGroupText}`);
-    if(rec.structureSummary) summaryLines.push(`結構：${rec.structureSummary}`);
-    if(rec.actionAdvice) summaryLines.push(`建議：${rec.actionAdvice}`);
-    if(Array.isArray(rec.positives) && rec.positives.length) summaryLines.push(`正向：${rec.positives.join('、')}`);
-    if(Array.isArray(rec.negatives) && rec.negatives.length) summaryLines.push(`風險：${rec.negatives.join('、')}`);
+    header.push(`通過傾向：${Number(rec.passTendency || 0).toFixed(1)}%`);
+    header.push(`風險等級：${String(rec.riskLevel || '-')}`);
+    header.push(`分析可信度：${Number(rec.reliability || 0).toFixed(1)}`);
+    if(rec.bestGroupText) header.push(`最佳組：${rec.bestGroupText}`);
+    if(rec.riskGroupText) header.push(`風險組：${rec.riskGroupText}`);
+    if(rec.structureSummary) header.push(`結構判讀：${rec.structureSummary}`);
+    if(rec.actionAdvice) header.push(`操作建議：${rec.actionAdvice}`);
+    if(Array.isArray(rec.positives) && rec.positives.length) header.push(`正向條件：${rec.positives.join('、')}`);
+    if(Array.isArray(rec.negatives) && rec.negatives.length) header.push(`風險提醒：${rec.negatives.join('、')}`);
   }
-  const groupLines = groups.map(g => `第${g.idx}組【${g.status}】 ${g.nums.join('、')}｜風險成分 ${g.riskyCount} 顆｜${g.reason}`);
-  return [...summaryLines, ...groupLines].join('\n');
+  sections.push(header.join('\n'));
+
+  const groupBlock = groups.map(g => {
+    const pairText = formatPreviewHits(g.pairHits);
+    const tripleText = formatPreviewHits(g.tripleHits);
+    return [
+      `第${g.idx}組【${g.status}】`,
+      `號碼：${g.nums.join('、') || '無'}`,
+      `風險分數：${Number(g.score || 0).toFixed(1)}｜風險成分：${g.riskyCount} 顆`,
+      `高風險雙號：${pairText}`,
+      `高風險三連：${tripleText}`,
+      `判定：${g.reason || '無'}`
+    ].join('\n');
+  }).join('\n\n');
+  if(groupBlock) sections.push(`四組完整分析\n${groupBlock}`);
+
+  const full = preview?.fullNumbers || [];
+  if(full.length){
+    sections.push(`全車號碼\n${full.join('、')}`);
+  }
+
+  return sections.join('\n\n');
 }
 
 function openGenerationPreview(id, bestResult, analysis){

@@ -167,6 +167,28 @@ function linesForGroups(record) {
   ];
 }
 
+
+function linesForAnalysis(record) {
+  const analysis = record.analysis || {};
+  const rec = analysis.recommendation || {};
+  const lines = [];
+  if (analysis.previewSummary) lines.push(`預覽結論：${analysis.previewSummary}`);
+  if (analysis.packStatus) lines.push(`預覽狀態：${analysis.canNotify ? '可直接通報' : analysis.packStatus}`);
+  if (typeof rec.passTendency !== 'undefined') lines.push(`通過傾向：${Number(rec.passTendency || 0).toFixed(1)}%`);
+  if (rec.riskLevel) lines.push(`風險等級：${rec.riskLevel}`);
+  if (typeof rec.reliability !== 'undefined') lines.push(`分析可信度：${Number(rec.reliability || 0).toFixed(1)}`);
+  if (rec.bestGroupText) lines.push(`最佳組：${rec.bestGroupText}`);
+  if (rec.riskGroupText) lines.push(`風險組：${rec.riskGroupText}`);
+  if (rec.structureSummary) lines.push(`結構判讀：${rec.structureSummary}`);
+  if (rec.actionAdvice) lines.push(`操作建議：${rec.actionAdvice}`);
+  if (Array.isArray(rec.positives) && rec.positives.length) lines.push(`正向條件：${rec.positives.join('、')}`);
+  if (Array.isArray(rec.negatives) && rec.negatives.length) lines.push(`風險提醒：${rec.negatives.join('、')}`);
+  if (analysis.previewReport) {
+    lines.push('', '完整分析：', String(analysis.previewReport));
+  }
+  return lines;
+}
+
 function buildCreatedMessage(record) {
   const title = record.trackType === 'manual' ? '手動追蹤' : '確定通報';
   const lines = [
@@ -178,7 +200,8 @@ function buildCreatedMessage(record) {
     `通報時間：${record.confirmedAt}`,
     ...(record.startFromIssue ? [`生效期數：${record.startFromIssue}`] : []),
     '',
-    ...linesForGroups(record)
+    ...linesForGroups(record),
+    ...(linesForAnalysis(record).length ? ['', ...linesForAnalysis(record)] : [])
   ];
   return lines.join('\n');
 }
@@ -207,7 +230,8 @@ function buildUpdatedMessage(record) {
     `更新時間：${record.confirmedAt}`,
     ...(record.startFromIssue ? [`生效期數：${record.startFromIssue}`] : []),
     '',
-    ...linesForGroups(record)
+    ...linesForGroups(record),
+    ...(linesForAnalysis(record).length ? ['', ...linesForAnalysis(record)] : [])
   ];
   return lines.join('\n');
 }
