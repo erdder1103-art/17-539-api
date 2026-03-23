@@ -332,8 +332,7 @@ function makeSearchCard(name, idx){
   const wrap = document.createElement('div');
   wrap.className = 'searchGroupCard';
   wrap.id = `searchCard_${idx}`;
-  const actionText = idx < 4 ? '鎖定本組' : '自動補滿';
-  wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div><div class="btns" style="margin-top:10px;"><button type="button" class="secondary" id="searchLockBtn_${idx}" data-idx="${idx}" style="display:${idx < 4 ? 'inline-flex' : 'none'};">${actionText}</button></div>`;
+    wrap.innerHTML = `<div class="searchGroupTitle"><span>${escapeHtml(name)}</span><span class="searchGroupBadge" id="searchBadge_${idx}">待搜尋</span></div><div class="searchGroupNums spinPulse" id="searchNums_${idx}">--、--、--、--、--</div><div class="searchGroupHint" id="searchHint_${idx}">等待系統分配候選號碼</div>`;
   return wrap;
 }
 
@@ -349,7 +348,7 @@ function openSearchOverlay(id){
   els.grid.innerHTML = '';
   names.forEach((name, idx)=> els.grid.appendChild(makeSearchCard(name, idx)));
   els.title.textContent = `${state.lotteries[id].cfg.title}｜自動生成中`;
-  els.sub.textContent = `系統會依${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布，快速生成一組可用方案。`;
+  els.sub.textContent = `系統會依${getRecentHistoryWindowText()}熱號 / 中熱 / 高風險雙連號 / 三連號，快速生成一組可觀察方案。`;
   els.pill.textContent = '生成中';
   els.fill.style.width = '0%';
   els.searched.textContent = '0';
@@ -357,7 +356,7 @@ function openSearchOverlay(id){
   els.stage.textContent = '初始化';
   els.elapsed.textContent = '0.0 秒';
   els.eta.textContent = '約 1 秒';
-  els.footer.textContent = '先看每組可行性；可用的組再由你手動鎖定，之後只重生未鎖定組。';
+  els.footer.textContent = '先看四組分析；不滿意就直接再生成，滿意就可直接通報。';
   if($('searchRerunBtn')) $('searchRerunBtn').disabled = true;
   if($('searchConfirmBtn')) $('searchConfirmBtn').disabled = true;
   els.overlay.classList.add('show');
@@ -397,7 +396,7 @@ function updateSearchOverlay(id, progress){
   els.elapsed.textContent = `${(elapsedMs / 1000).toFixed(1)} 秒`;
   els.eta.textContent = formatEta(etaMs);
   els.pill.textContent = progress?.statusText || '生成中';
-  els.footer.textContent = progress?.footerText || '系統正在避開高風險雙號 / 三連號，並拆散熱號到不同組別。';
+  els.footer.textContent = progress?.footerText || '系統正在避開高風險雙號 / 三連號，並壓低熱號與中熱進組數量。';
 }
 
 function getGroupNamesForLottery(id){
@@ -479,41 +478,32 @@ function applySearchOverlayResult(id, bestResult){
     if(badgeEl){ badgeEl.textContent = isLocked ? '已鎖定' : (detail?.status || (i < 4 ? '候選' : '待補滿')); }
     if(hintEl){
       if(i >= 4){
-        hintEl.textContent = getLockedGroupCount(id) >= 4 ? '全車號碼會以剩餘 19 顆自動補滿' : '等四組鎖定完成後，自動補滿剩餘 19 顆';
+        hintEl.textContent = '全車號碼會以主四組剩餘的 19 顆自動補滿';
       } else if(isLocked){
-        hintEl.textContent = '此組已鎖定；可解除鎖定或再次生成時保留';
+        hintEl.textContent = '此組為目前候選，可直接通報或再生成比較';
       } else if(detail){
         hintEl.textContent = `${detail.reason || detail.status}｜風險成分 ${detail.riskyCount || 0}`;
       } else {
-        hintEl.textContent = '可查看本組後決定是否鎖定';
+        hintEl.textContent = '可查看本組分析後決定是否直接通報';
       }
     }
-    if(lockBtn){
-      if(i < 4){
-        const canLock = detail && (detail.status === '可用' || detail.status === '可觀察');
-        lockBtn.style.display = 'inline-flex';
-        lockBtn.disabled = !detail;
-        lockBtn.textContent = isLocked ? '解除鎖定' : (canLock ? '鎖定本組' : '此組不建議鎖定');
-      } else {
-        lockBtn.style.display = 'none';
-      }
-    }
+    if(lockBtn){ lockBtn.style.display = 'none'; lockBtn.disabled = true; }
   }
-  const lockedCount = getLockedGroupCount(id);
-  if(lockedCount >= 4){
+  const mainReady = [0,1,2,3].every(idx => { const nums = (bestResult.groups && bestResult.groups[names[idx]]) ? bestResult.groups[names[idx]] : []; return Array.isArray(nums) && nums.length === 5; });
+  if(mainReady){
     rebuildFullFromLocked(id);
-    els.pill.textContent = '可通報';
-    els.stage.textContent = '四組已全部鎖定';
-    els.footer.textContent = '四組已鎖定完成；全車號碼已自動補上剩餘 19 顆，現在可以確認通報。';
+    els.pill.textContent = bestResult.canNotify ? '可直接通報' : (bestResult.packStatus || '可觀察');
+    els.stage.textContent = `已完成四組候選`;
+    els.footer.textContent = bestResult.canNotify ? '四組已生成完成；已直接補上全車剩餘 19 顆，可直接通報。' : '四組已生成完成；可直接通報，或再生成比較更乾淨的方案。';
     if($('searchConfirmBtn')) $('searchConfirmBtn').disabled = false;
-    if($('searchRerunBtn')) $('searchRerunBtn').disabled = true;
-    setConfirmAvailability(id, true, '四組已鎖定完成');
+    if($('searchRerunBtn')) $('searchRerunBtn').disabled = false;
+    setConfirmAvailability(id, true, bestResult.canNotify ? '四組已完成' : '可觀察方案也可通報');
   } else {
-    els.stage.textContent = `目前已鎖定 ${lockedCount} 組`;
-    els.footer.textContent = lockedCount > 0 ? `已鎖定 ${lockedCount} 組；按「重生未鎖定」只會重跑剩下的組。` : '請先鎖定你要保留的組，再重生其他組。';
+    els.stage.textContent = '候選尚未完成';
+    els.footer.textContent = '尚未湊滿四組有效號碼，請重新生成。';
     if($('searchConfirmBtn')) $('searchConfirmBtn').disabled = true;
     if($('searchRerunBtn')) $('searchRerunBtn').disabled = false;
-    setConfirmAvailability(id, false, '請先鎖定四組後再通報');
+    setConfirmAvailability(id, false, '尚未完成四組');
   }
 }
 
@@ -573,12 +563,6 @@ $("searchRerunBtn")?.addEventListener("click", ()=>rerunUnlockedGroupsFromOverla
 $("searchConfirmBtn")?.addEventListener("click", ()=>confirmLockedPlanFromOverlay());
 $("searchOverlay").addEventListener("click", (e)=>{
   if(e.target.id === "searchOverlay") closeSearchOverlay();
-  const btn = e.target.closest('[id^="searchLockBtn_"]');
-  if(btn){
-    const idx = parseInt(btn.dataset.idx, 10);
-    const id = searchAnimState.currentLotteryId;
-    if(id && Number.isInteger(idx)) lockCandidateGroupFromOverlay(id, idx + 1);
-  }
 });
 
 function cleanupNumbers(arr, maxNum){
@@ -2366,15 +2350,7 @@ function formatEta(ms){
           .filter(Boolean)
           .join('<br>');
         const rec = buildDisplayRecommendation(row, recommendMap.get(row.id || ''));
-        const groupLinesHtml = Array.isArray(rec?.groupLineTexts) && rec.groupLineTexts.length
-          ? `<div class="small" style="margin-top:8px;line-height:1.6;">${rec.groupLineTexts.map(line => escapeHtml(line)).join('<br>')}</div>`
-          : '';
-        const recHtml = rec ? `<div class="stats" style="margin-top:8px;">
-          <div class="stat"><b>過關傾向</b><span>${escapeHtml(String(rec.passTendency ?? rec.predictedPassRate))}%</span></div>
-          <div class="stat"><b>風險等級</b><span>${escapeHtml(rec.riskLevel || '-')}</span></div>
-          <div class="stat"><b>分析可靠度</b><span>${escapeHtml(String(rec.reliability ?? rec.confidence ?? '-'))}</span></div>
-        </div>${groupLinesHtml}
-        <div class="small" style="margin-top:8px;">最佳組：${escapeHtml(rec.bestGroupText || '—')}<br>風險組：${escapeHtml(rec.riskGroupText || '—')}<br>結構：${escapeHtml(rec.structureSummary || '—')}<br>建議：${escapeHtml(rec.actionAdvice || '—')}<br>正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
+        const recHtml = rec ? `<div class="small" style="margin-top:8px;color:#ffd27a;line-height:1.7;">分析已前移到防2/3生成視窗；通報後這裡僅保留追蹤資訊。<br>狀態：${escapeHtml(rec.riskLevel || '-')}｜可靠度 ${escapeHtml(String(rec.reliability ?? rec.confidence ?? '-'))}</div>` : '';
         const issueLines = [
           row.startFromIssue ? `生效期數：${escapeHtml(row.startFromIssue)}` : '',
           row.baseIssue ? `建立基準期：${escapeHtml(row.baseIssue)}` : '',
@@ -2991,11 +2967,11 @@ function buildCandidatePlanMetrics(mains, analysis){
   let canNotify = true;
   if (highCount > 0) {
     packStatus = '不可通報';
-    summary = `本輪有 ${highCount} 組高風險，建議先鎖定可用組，再重生未鎖定組。`;
+    summary = `本輪有 ${highCount} 組高風險，建議直接再生成。`; 
     canNotify = false;
   } else if (watchCount > 0) {
     packStatus = '可觀察';
-    summary = `本輪有 ${watchCount} 組可觀察，可先鎖定可用組，再視情況補強。`;
+    summary = `本輪有 ${watchCount} 組可觀察，可直接通報或再生成比較。`;
     canNotify = true;
   }
   return {
@@ -3302,7 +3278,7 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
     renderGroupPreview(id, bestResult);
     fillManualFieldsFromPlan(id, bestResult.groups);
     const lockedNow = getLockedGroupCount(id);
-    showMiniNotice(`${state.lotteries[id].cfg.title}：已生成候選方案，請在生成視窗中鎖定可用組，再重生未鎖定組`, bestResult.canNotify === false ? 'warn' : 'ok');
+    showMiniNotice(`${state.lotteries[id].cfg.title}：已生成候選方案，可直接通報或再生成比較`, bestResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
     console.error(err);
     state.lotteries[id].generatedGroups = null;
@@ -3801,7 +3777,7 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     packStatus = '不可通報';
   } else if (highCount > 0) summary = `本輪不通報：有 ${highCount} 組超過風險線，請直接重新生成。`;
   else if (watchCount > 1) summary = `本輪有 ${watchCount} 組可觀察，可先鎖定可用組再補強。`;
-  else if (watchCount === 1) summary = '本輪可用，且只有 1 組可觀察。';
+  else if (watchCount === 1) summary = '本輪可用，可直接通報。';
   return { summary, best, worst, groups: groupRows, canNotify, packStatus };
 }
 
@@ -3822,10 +3798,10 @@ ${preview.worst.reason}` : '尚無';
     `<span class="small">${escapeHtml(g.reason)}${g.riskyCount ? `｜風險號 ${g.riskyCount}` : ''}${g.pairHits ? `｜雙碰 ${g.pairHits}` : ''}${g.tripleHits ? `｜三碰 ${g.tripleHits}` : ''}</span></div>`).join('');
   const confirmBtn = $('generationPreviewConfirm');
   if(confirmBtn){
-    confirmBtn.disabled = !preview.canNotify;
-    confirmBtn.textContent = preview.canNotify ? '確認通報' : '此套不通報';
-    confirmBtn.style.opacity = preview.canNotify ? '1' : '0.55';
-    confirmBtn.style.cursor = preview.canNotify ? 'pointer' : 'not-allowed';
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = '確認通報';
+    confirmBtn.style.opacity = '1';
+    confirmBtn.style.cursor = 'pointer';
   }
   modal.style.pointerEvents = 'auto';
   modal.style.display = 'flex';
@@ -3845,7 +3821,6 @@ function rerunLatestGenerationPreview(){
 async function confirmLatestGenerationPreview(){
   const p = state.lastGenerationPreview;
   if(!p || !p.lotteryId) return;
-  if(!p.preview?.canNotify){ showMiniNotice('本輪方案尚未通過整套驗收，請重新生成', 'warn'); return; }
   closeGenerationPreview();
   await confirmTracking(p.lotteryId);
   clearLockedGroups(p.lotteryId);

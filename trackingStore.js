@@ -69,9 +69,7 @@ function extractDateKey(value) {
 }
 
 function isRecordActive(row) {
-  if (!row || row.status !== 'pending') return false;
-  const dateKey = extractDateKey(row.createdAt || row.confirmedAt);
-  return !dateKey || dateKey === getTodayKey();
+  return !!row && row.status === 'pending';
 }
 
 function getActiveTracking(lotteryType) {
