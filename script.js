@@ -2126,9 +2126,9 @@ function formatEta(ms){
 
   async function confirmTracking(id){
     const s = state.lotteries[id];
-    if(!s.generatedGroups || !s.generatedGroups.groups || s.generatedGroups.noQualifiedResult || s.generatedGroups.canNotify === false){
-      showMiniNotice(`${s.cfg.title}：目前沒有合格低風險方案，請先執行自動生成搜尋`, "warn");
-      return;
+    if(!s.generatedGroups || !s.generatedGroups.groups || s.generatedGroups.noQualifiedResult){
+      showMiniNotice(`${s.cfg.title}：目前沒有可通報方案，請先執行自動生成搜尋`, "warn");
+      return false;
     }
 
     if(state.trackingSubmitLocks[id]){
@@ -2139,7 +2139,7 @@ function formatEta(ms){
     const btn = $(`${id}_btnConfirmTracking`);
     if(btn && btn.disabled){
       showMiniNotice(`${s.cfg.title}：通報處理中，請稍候`, "warn");
-      return;
+      return false;
     }
 
     const oldText = btn ? btn.textContent : "";
@@ -2185,12 +2185,15 @@ function formatEta(ms){
       const result = await postJsonApi('/api/confirm-tracking', payload);
       if(result?.busy){
         showMiniNotice(`${s.cfg.title}：${result.message || "通報處理中，請勿重複點擊"}`, "warn");
+        return false;
       }else{
         showMiniNotice(`${s.cfg.title}：${result.message || "通報已送出"}`, "ok");
-        refreshTrackingBoard(id, { silent: true });
+        await refreshTrackingBoard(id, { silent: true });
+        return true;
       }
     }catch(err){
       showMiniNotice(`${s.cfg.title}：通報失敗：${err.message || '未知錯誤'}`, "warn");
+      return false;
     }finally{
       state.trackingSubmitLocks[id] = false;
       if(btn){
@@ -3472,6 +3475,11 @@ function ensureTaskCenterUI(){
         <div class="analysisTitle">整體結論</div>
         <div id="generationPreviewSummary" class="small" style="line-height:1.8;white-space:pre-wrap;">先生成結果，再決定是否通報</div>
       </div>
+      <div class="analysisWrap" style="margin-top:14px;grid-template-columns:repeat(3,minmax(0,1fr));">
+        <div class="metricCard"><div class="label">通過傾向</div><div class="num" id="generationPreviewPass">-</div></div>
+        <div class="metricCard"><div class="label">風險等級</div><div class="num" id="generationPreviewLevel">-</div></div>
+        <div class="metricCard"><div class="label">分析可信度</div><div class="num" id="generationPreviewReliability">-</div></div>
+      </div>
       <div class="analysisWrap" style="margin-top:14px;grid-template-columns:1fr 1fr;">
         <div class="analysisPanel">
           <div class="analysisTitle">最穩組</div>
@@ -3775,10 +3783,19 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     summary = '本輪沒有找到可直接通報方案，請查看備選組合後重新生成。';
     canNotify = false;
     packStatus = '不可通報';
-  } else if (highCount > 0) summary = `本輪不通報：有 ${highCount} 組超過風險線，請直接重新生成。`;
-  else if (watchCount > 1) summary = `本輪有 ${watchCount} 組可觀察，可先鎖定可用組再補強。`;
+  } else if (highCount > 0) summary = `本輪可觀察：有 ${highCount} 組高風險，但你仍可直接通報或再生一次。`;
+  else if (watchCount > 1) summary = `本輪有 ${watchCount} 組可觀察，可直接通報，或再生一次找更乾淨方案。`;
   else if (watchCount === 1) summary = '本輪可用，可直接通報。';
-  return { summary, best, worst, groups: groupRows, canNotify, packStatus };
+  const normalizedGroups = {
+    group1: fallbackMainGroups[0] || [],
+    group2: fallbackMainGroups[1] || [],
+    group3: fallbackMainGroups[2] || [],
+    group4: fallbackMainGroups[3] || [],
+    full: Array.isArray(groupsMap[allGroupKeys[4]]) ? groupsMap[allGroupKeys[4]].map(v=>String(v).padStart(2,'0')) : []
+  };
+  const analysisMeta = buildTrackingAnalysisMetaFromGroups(normalizedGroups, analysis || {});
+  const rec = buildDisplayRecommendation({ id: '', groups: normalizedGroups, analysis: analysisMeta }, null);
+  return { summary, best, worst, groups: groupRows, canNotify, packStatus, recommendation: rec };
 }
 
 function openGenerationPreview(id, bestResult, analysis){
@@ -3789,6 +3806,10 @@ function openGenerationPreview(id, bestResult, analysis){
   const preview = buildGenerationPreviewState(id, bestResult, analysis);
   state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
   if($('generationPreviewSummary')) $('generationPreviewSummary').textContent = preview.summary;
+  const rec = preview.recommendation || null;
+  if($('generationPreviewPass')) $('generationPreviewPass').textContent = rec ? `${Number(rec.passTendency || 0).toFixed(1)}%` : '-';
+  if($('generationPreviewLevel')) $('generationPreviewLevel').textContent = rec ? String(rec.riskLevel || '-') : '-';
+  if($('generationPreviewReliability')) $('generationPreviewReliability').textContent = rec ? String(Number(rec.reliability || 0).toFixed ? Number(rec.reliability || 0).toFixed(1) : rec.reliability) : '-';
   if($('generationPreviewBest')) $('generationPreviewBest').textContent = preview.best ? `第${preview.best.idx}組｜${preview.best.nums.join('、')}
 ${preview.best.reason}` : '尚無';
   if($('generationPreviewRisk')) $('generationPreviewRisk').textContent = preview.worst ? `第${preview.worst.idx}組｜${preview.worst.nums.join('、')}
@@ -3821,9 +3842,11 @@ function rerunLatestGenerationPreview(){
 async function confirmLatestGenerationPreview(){
   const p = state.lastGenerationPreview;
   if(!p || !p.lotteryId) return;
-  closeGenerationPreview();
-  await confirmTracking(p.lotteryId);
-  clearLockedGroups(p.lotteryId);
+  const ok = await confirmTracking(p.lotteryId);
+  if(ok){
+    closeGenerationPreview();
+    clearLockedGroups(p.lotteryId);
+  }
 }
 
 function openBroadcastCenter(){
