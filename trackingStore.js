@@ -89,12 +89,6 @@ function getActiveTrackings(lotteryType) {
   return list;
 }
 
-function getTrackingById(lotteryType, trackingId) {
-  const state = getTypeState(lotteryType);
-  if (state.system && String(state.system.id || '') === String(trackingId || '')) return state.system;
-  return (state.manuals || []).find((row) => String(row.id || '') === String(trackingId || '')) || null;
-}
-
 function cancelTrackingById(lotteryType, trackingId, reason = 'replaced') {
   const key = normalizeLotteryType(lotteryType);
   const map = getTrackingMap();
@@ -249,7 +243,6 @@ function getTrackingHistory(lotteryType, limit = 100) {
 module.exports = {
   getActiveTracking,
   getActiveTrackings,
-  getTrackingById,
   getTrackingHistory,
   cancelActiveTracking,
   cancelTrackingById,
