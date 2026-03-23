@@ -2352,15 +2352,10 @@ function formatEta(ms){
         fetchJson(apiPathCandidates(`/api/recommend/${type}`)).catch(()=>({ recommendations: [] }))
       ]);
       const active = Array.isArray(data.active) ? data.active : [];
+      const completed = Array.isArray(data.completed) ? data.completed : [];
+      const cancelled = Array.isArray(data.cancelled) ? data.cancelled : [];
       const recommendMap = new Map((recommendData.recommendations || []).map((row)=>[row.trackingId, row]));
-      if(!active.length){
-        box.innerHTML = '<span class="muted">目前沒有待開獎追蹤</span>';
-        if(!silent){
-          showMiniNotice(`${state.lotteries[id].cfg.title}：追蹤清單已刷新，目前沒有待開獎追蹤`, 'info');
-        }
-        return;
-      }
-      box.innerHTML = active.map((row)=>{
+      const renderTrackingRow = (row, mode = 'active') => {
         const title = row.trackType === 'manual'
           ? `手動｜${escapeHtml(row.sourceName || '未命名通報')}`
           : '系統｜防2/3碰撞追蹤';
@@ -2380,8 +2375,25 @@ function formatEta(ms){
           <div class="stat"><b>分析可靠度</b><span>${escapeHtml(String(rec.reliability ?? rec.confidence ?? '-'))}</span></div>
         </div>${groupLinesHtml}
         <div class="small" style="margin-top:8px;">最佳組：${escapeHtml(rec.bestGroupText || '—')}<br>風險組：${escapeHtml(rec.riskGroupText || '—')}<br>結構：${escapeHtml(rec.structureSummary || '—')}<br>建議：${escapeHtml(rec.actionAdvice || '—')}<br>正向：${escapeHtml((rec.positives || []).join('、') || '—')}<br>風險：${escapeHtml((rec.negatives || []).join('、') || '—')}</div>` : '';
-        return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}</div><div style="margin-top:6px;">${nums}</div>${recHtml}<div class="btns" style="margin-top:8px;"><button class="secondary btnRecalcTracking" data-id="${escapeHtml(row.id || '')}">重算分析</button><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button></div></div>`;
-      }).join('');
+        const issueLines = [
+          row.startFromIssue ? `生效期數：${escapeHtml(row.startFromIssue)}` : '',
+          row.baseIssue ? `建立基準期：${escapeHtml(row.baseIssue)}` : '',
+          mode === 'completed' && row.settlement?.issue ? `結算期數：${escapeHtml(row.settlement.issue)}` : '',
+          mode === 'cancelled' && row.cancelledAt ? `取消時間：${escapeHtml(row.cancelledAt)}` : ''
+        ].filter(Boolean).join('<br>');
+        const actions = mode === 'active'
+          ? `<button class="secondary btnCheckNowTracking" data-id="${escapeHtml(row.id || '')}">立即核對本期</button><button class="secondary btnRecalcTracking" data-id="${escapeHtml(row.id || '')}">重算分析</button><button class="secondary btnCancelTracking" data-id="${escapeHtml(row.id || '')}">取消這筆追蹤</button>`
+          : '';
+        return `<div class="groupRow"><b>${title}</b><div class="small">建立：${escapeHtml(row.confirmedAt || row.createdAt || '')}${issueLines ? `<br>${issueLines}` : ''}</div><div style="margin-top:6px;">${nums}</div>${recHtml}${actions ? `<div class="btns" style="margin-top:8px;">${actions}</div>` : ''}</div>`;
+      };
+      const blocks = [];
+      if(active.length) blocks.push(`<div class="small" style="margin:6px 0 8px;color:#cbd5e1;">待開獎追蹤（${active.length}）</div>${active.map((row)=>renderTrackingRow(row,'active')).join('')}`);
+      if(completed.length) blocks.push(`<div class="small" style="margin:12px 0 8px;color:#94a3b8;">已結算追蹤（${completed.length}）</div>${completed.slice(0,20).map((row)=>renderTrackingRow(row,'completed')).join('')}`);
+      if(cancelled.length) blocks.push(`<div class="small" style="margin:12px 0 8px;color:#94a3b8;">已取消／已被取代（${cancelled.length}）</div>${cancelled.slice(0,20).map((row)=>renderTrackingRow(row,'cancelled')).join('')}`);
+      box.innerHTML = blocks.length ? blocks.join('') : '<span class="muted">目前沒有追蹤紀錄</span>';
+      Array.from(box.querySelectorAll('.btnCheckNowTracking')).forEach((btn)=>{
+        btn.addEventListener('click', ()=>checkTrackingNow(id, btn.dataset.id || ''));
+      });
       Array.from(box.querySelectorAll('.btnRecalcTracking')).forEach((btn)=>{
         btn.addEventListener('click', ()=>recalculateTrackingItem(id, btn.dataset.id || ''));
       });
@@ -2389,10 +2401,22 @@ function formatEta(ms){
         btn.addEventListener('click', ()=>cancelTrackingItem(id, btn.dataset.id || ''));
       });
       if(!silent){
-        showMiniNotice(`${state.lotteries[id].cfg.title}：追蹤清單已刷新，目前共有 ${active.length} 筆待開獎追蹤`, 'info');
+        showMiniNotice(`${state.lotteries[id].cfg.title}：追蹤清單已刷新，待開獎 ${active.length} 筆`, 'info');
       }
     }catch(err){
       box.innerHTML = `<span class="muted">追蹤清單載入失敗：${escapeHtml(err.message || '未知錯誤')}</span>`;
+    }
+  }
+
+
+  async function checkTrackingNow(id, trackingId){
+    try{
+      const lotteryType = id === 'ttl' ? 'ttl' : '539';
+      const data = await postJsonApi('/api/tracking/check-now', { lotteryType, trackingId });
+      showMiniNotice(`${state.lotteries[id].cfg.title}：已立即核對第 ${data.issue || '-'} 期`, 'success');
+      await refreshTrackingBoard(id, { silent: true });
+    }catch(err){
+      showMiniNotice(`立即核對失敗：${err.message || '未知錯誤'}`, 'error');
     }
   }
 

@@ -1049,8 +1049,10 @@ function compareActiveTrackings(lotteryType) {
   };
 }
 
-async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issueKey) {
-  const active = getActiveTrackings(lotteryType).map((tracking) => rebuildTrackingAnalysis(tracking, lotteryType));
+async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issueKey, options = {}) {
+  const activeAll = getActiveTrackings(lotteryType).map((tracking) => rebuildTrackingAnalysis(tracking, lotteryType));
+  const trackingIds = Array.isArray(options.trackingIds) ? options.trackingIds.map(String) : [];
+  const active = trackingIds.length ? activeAll.filter((tracking) => trackingIds.includes(String(tracking.id || ''))) : activeAll;
   if (!Array.isArray(active) || !active.length) {
     return { skipped: true, reason: 'no active tracking' };
   }
@@ -1059,7 +1061,7 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
   const key = lotteryType === 'ttl' ? 'ttl' : '539';
   if (!state[key]) state[key] = { processedIssues: [] };
   state[key].processedIssues = Array.isArray(state[key].processedIssues) ? state[key].processedIssues : [];
-  if (state[key].processedIssues.includes(issueKey)) {
+  if (!options.force && state[key].processedIssues.includes(issueKey)) {
     return { skipped: true, reason: 'already processed' };
   }
 
@@ -1116,7 +1118,7 @@ async function processTrackingResult(lotteryType, lotteryTitle, latestDraw, issu
   }
 
   writeJson(RESULT_HISTORY_FILE, history);
-  state[key].processedIssues.push(issueKey);
+  if (!state[key].processedIssues.includes(issueKey)) state[key].processedIssues.push(issueKey);
   state[key].processedIssues = state[key].processedIssues.slice(-120);
   state[key].lastIssue = issueKey;
   state[key].lastCheckedAt = nowFull();

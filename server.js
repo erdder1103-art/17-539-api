@@ -113,6 +113,30 @@ function parseTTL(html) {
   const text = htmlToText(html);
   saveDebugFile('debug-ttl.txt', text);
   const results = [];
+  const issueRegex = /第\s*(\d+)\s*期/g;
+  const issueMatches = Array.from(text.matchAll(issueRegex));
+  for (let i = 0; i < issueMatches.length; i++) {
+    const current = issueMatches[i];
+    const start = current.index || 0;
+    const end = i + 1 < issueMatches.length ? (issueMatches[i + 1].index || start + 220) : Math.min(text.length, start + 220);
+    const segment = text.slice(start, end);
+    const issue = current[1] || '';
+    const dateMatch = segment.match(/(20\d{2}-\d{2}-\d{2})/);
+    if (!dateMatch) continue;
+    const tail = segment.slice((dateMatch.index || 0) + dateMatch[0].length);
+    const nums = [];
+    for (const nm of tail.matchAll(/(\d{1,2})/g)) {
+      const n = Number(nm[1]);
+      if (!Number.isInteger(n) || n < 1 || n > 39) continue;
+      nums.push(n);
+      if (nums.length >= 5) break;
+    }
+    if (!isValidFive(nums)) continue;
+    results.push({ issue, date: dateMatch[1].replace(/-/g, '/'), numbers: nums.map(pad2) });
+  }
+  if (results.length) return dedupe(results).slice(0, DRAW_HISTORY_LIMIT);
+
+  const fallback = [];
   const regex = /第\s*(\d+)\s*期[\s\S]{0,120}?(\d{4}-\d{2}-\d{2})[\s\S]{0,50}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})[\s\S]{0,12}?(\d{1,2})(?=[\s\S]{0,80}?第\s*\d+\s*期|[\s\S]*$)/g;
   let m;
   while ((m = regex.exec(text)) !== null) {
@@ -120,9 +144,9 @@ function parseTTL(html) {
     const date = (m[2] || '').replace(/-/g, '/');
     const nums = [m[3], m[4], m[5], m[6], m[7]].map(Number);
     if (!isValidFive(nums)) continue;
-    results.push({ issue, date, numbers: nums.map(pad2) });
+    fallback.push({ issue, date, numbers: nums.map(pad2) });
   }
-  return dedupe(results).slice(0, DRAW_HISTORY_LIMIT);
+  return dedupe(fallback).slice(0, DRAW_HISTORY_LIMIT);
 }
 async function handleAutoCheck(type, title, list) {
   if (!Array.isArray(list) || !list.length) return;
@@ -209,7 +233,7 @@ function withIssueContext(body = {}) {
     lotteryType,
     latestIssue,
     baseIssue: body.baseIssue || latestIssue,
-    startFromIssue: body.startFromIssue || buildNextIssue(body.baseIssue || latestIssue)
+    startFromIssue: body.startFromIssue || (body.baseIssue || latestIssue)
   };
 }
 
@@ -246,6 +270,21 @@ function ensureSeedTrackingRecord() {
   } catch (err) {
     return { restored: false, error: err.message };
   }
+}
+
+
+async function runImmediateCheck(type, trackingId = '') {
+  const key = type === 'ttl' ? 'ttl' : '539';
+  const title = key === 'ttl' ? '天天樂' : '539';
+  const list = key === 'ttl' ? cacheTTL : cache539;
+  if (!Array.isArray(list) || !list.length) throw new Error(`${title} 目前沒有可核對的開獎資料`);
+  const latest = list[0];
+  const active = getActiveTrackings(key);
+  const targets = trackingId ? active.filter((x) => x.id === trackingId) : active;
+  if (!targets.length) throw new Error('目前沒有可立即核對的待開獎追蹤');
+  const issueKey = `${latest.issue}|${latest.date}|${latest.numbers.join('-')}`;
+  const result = await processTrackingResult(key, title, latest.numbers, issueKey, { force: true, trackingIds: targets.map((x) => x.id) });
+  return { ok: true, lotteryType: key, lotteryTitle: title, issue: latest.issue, date: latest.date, numbers: latest.numbers, result };
 }
 
 function scheduleNextUpdate() {
@@ -293,6 +332,17 @@ app.get('/api/analysis/compare-active/:type', (req, res) => res.json(compareActi
 app.get('/api/history/539', (req, res) => res.json({ ok: true, rows: getResultHistory('539') }));
 app.get('/api/history/ttl', (req, res) => res.json({ ok: true, rows: getResultHistory('ttl') }));
 app.get('/api/tracking/:type', (req, res) => res.json(getTrackingOverview(req.params.type)));
+app.post('/api/tracking/check-now', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const lotteryType = body.lotteryType === 'ttl' ? 'ttl' : '539';
+    const trackingId = String(body.trackingId || '').trim();
+    const result = await runImmediateCheck(lotteryType, trackingId);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '立即核對失敗' });
+  }
+});
 app.post('/api/tracking/recalculate', (req, res) => {
   try { res.json(recalculateTrackingAnalysis(req.body || {})); }
   catch (err) { res.status(400).json({ ok: false, message: err.message || '重算分析失敗' }); }
