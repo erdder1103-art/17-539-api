@@ -3064,13 +3064,12 @@ function isCandidateBetter(metricsA, metricsB){
 }
 
 function buildCandidatePlanMetrics(mains, analysis){
-  const highRiskPairs = new Set(analysis.highRiskPairs || []);
-  const highRiskTriples = new Set(analysis.highRiskTriples || []);
-  const hot = new Set(analysis.hot || []);
-  const warm = new Set(analysis.warm || []);
+  const recentDraws = Array.isArray(analysis?.recentDraws) ? analysis.recentDraws.slice(0, Math.min(36, analysis.recentDraws.length)) : [];
   let totalScore = 0;
   let twoHitRisk = 0;
   let threeHitRisk = 0;
+  let historicalTwoHitRisk = 0;
+  let historicalThreeHitRisk = 0;
   const detailScores = [];
   const groupDetails = [];
   mains.forEach((group, index) => {
@@ -3078,10 +3077,30 @@ function buildCandidatePlanMetrics(mains, analysis){
     const detail = classifyAvoidanceRiskGroup(sorted, analysis);
     const pairExposure = getCombinations(sorted,2).reduce((sum,pair)=> sum + Number(analysis.pairCounts?.[comboKey(pair)] || 0), 0);
     const tripleExposure = getCombinations(sorted,3).reduce((sum,triple)=> sum + Number(analysis.tripleCounts?.[comboKey(triple)] || 0), 0);
-    const score = detail.riskyCount * 10 + detail.pairHits.length * 3 + detail.tripleHits.length * 5;
+    let recent2 = 0;
+    let recent3 = 0;
+    let recent4p = 0;
+    for(const draw of recentDraws){
+      const hit = sorted.filter(n => draw.includes(n)).length;
+      if(hit === 2) recent2++;
+      else if(hit === 3) recent3++;
+      else if(hit >= 4) recent4p++;
+    }
+    const score = (
+      detail.riskyCount * 12 +
+      detail.pairHits.length * 4 +
+      detail.tripleHits.length * 7 +
+      pairExposure * 0.35 +
+      tripleExposure * 0.65 +
+      recent2 * 18 +
+      recent3 * 32 -
+      recent4p * 6
+    );
     totalScore += score;
-    twoHitRisk += detail.pairHits.length;
-    threeHitRisk += detail.tripleHits.length;
+    twoHitRisk += detail.pairHits.length + recent2;
+    threeHitRisk += detail.tripleHits.length + recent3;
+    historicalTwoHitRisk += recent2;
+    historicalThreeHitRisk += recent3;
     detailScores.push(Number(score.toFixed(2)));
     groupDetails.push({
       index: index + 1,
@@ -3094,6 +3113,9 @@ function buildCandidatePlanMetrics(mains, analysis){
       tripleHits: detail.tripleHits,
       pairExposure,
       tripleExposure,
+      recentTwoHitRisk: recent2,
+      recentThreeHitRisk: recent3,
+      recentFourPlus: recent4p,
       score: Number(score.toFixed(2)),
       status: detail.status,
       reason: detail.reason
@@ -3101,22 +3123,34 @@ function buildCandidatePlanMetrics(mains, analysis){
   });
   const highCount = groupDetails.filter(g => g.status === '高風險').length;
   const watchCount = groupDetails.filter(g => g.status === '可觀察').length;
+  const risky23Count = groupDetails.filter(g => (g.recentTwoHitRisk + g.recentThreeHitRisk) >= 2).length;
   let packStatus = '可通報';
-  let summary = '四組主號風險成分偏低，可直接通報。';
+  let summary = '四組主號已優先避開近期容易卡在 2-3 顆的結構，可直接通報。';
   let canNotify = true;
   if (highCount > 0) {
     packStatus = '不可通報';
-    summary = `本輪有 ${highCount} 組高風險，建議直接再生成。`; 
+    summary = `本輪有 ${highCount} 組高風險，系統應直接再生成。`;
     canNotify = false;
-  } else if (watchCount > 0) {
+  } else if (risky23Count > 0) {
+    packStatus = '不可通報';
+    summary = `本輪有 ${risky23Count} 組近期容易落在 2-3 顆，系統應直接再生成。`;
+    canNotify = false;
+  } else if (watchCount > 1) {
+    packStatus = '不可通報';
+    summary = `本輪可觀察組過多，代表仍容易擦邊，系統應直接再生成。`;
+    canNotify = false;
+  } else if (watchCount === 1) {
     packStatus = '可觀察';
-    summary = `本輪有 ${watchCount} 組可觀察，可直接通報或再生成比較。`;
+    summary = '本輪僅 1 組可觀察，其餘已偏低擦邊結構，可直接通報。';
     canNotify = true;
   }
   return {
     totalScore: Number(totalScore.toFixed(2)),
     twoHitRisk,
     threeHitRisk,
+    historicalTwoHitRisk,
+    historicalThreeHitRisk,
+    risky23Count,
     hotSpread: 0,
     detailScores,
     highCount,
@@ -3155,7 +3189,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     3: Array.isArray(stateLocks[3]) ? stateLocks[3].slice() : null,
     4: Array.isArray(stateLocks[4]) ? stateLocks[4].slice() : null
   };
-  const candidateCount = 220;
+  const candidateCount = 48;
   let qualified = null;
   let fallback = null;
 
@@ -3180,7 +3214,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         continue;
       }
       let bestLocal = null;
-      for(let localTry=0; localTry<10; localTry++){
+      for(let localTry=0; localTry<6; localTry++){
         const localUsed = new Set(Array.from(used));
         const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
         if(proposed.length < 5) continue;
@@ -3230,7 +3264,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   function optimizeCandidatePack(seedGroups){
     let bestGroups = JSON.parse(JSON.stringify(seedGroups));
     let bestMetrics = buildCandidatePlanMetrics([bestGroups[groupNames[0]], bestGroups[groupNames[1]], bestGroups[groupNames[2]], bestGroups[groupNames[3]]], analysis);
-    for(let round=0; round<6; round++){
+    for(let round=0; round<4; round++){
       if(bestMetrics.canNotify) break;
       const ordered = bestMetrics.groupDetails.slice().sort((a,b)=>{
         const weight = { '高風險': 3, '可觀察': 2, '可用': 0 };
@@ -3251,7 +3285,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         }
         let bestLocalGroups = null;
         let bestLocalMetrics = null;
-        for(let localTry=0; localTry<8; localTry++){
+        for(let localTry=0; localTry<5; localTry++){
           const localUsed = new Set(Array.from(fixedUsed));
           const safeMid = shuffle((mid || []).filter(n=>!riskyNumbers.has(n) && !cold.includes(n)));
           const safeWarm = shuffle((warm || []).filter(n=>!riskyNumbers.has(n)));
@@ -3283,9 +3317,9 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
 
   for(let candidateIndex=0; candidateIndex<candidateCount; candidateIndex++){
     if(searchAnimState.cancelRequested){ throw new Error('已取消生成'); }
-    if(candidateIndex % 10 === 0){
+    if(candidateIndex % 8 === 0){
       if(typeof onProgress === "function") onProgress({ searched: candidateIndex, target: candidateCount, elapsedMs: candidateIndex * 6, lowRiskFound: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: "生成中", footerText: "系統正在分批尋找較乾淨的候選方案…" });
-      await sleep(8);
+      await sleep(2);
     }
     const used = new Set();
     const groups = {};
@@ -3298,7 +3332,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
         continue;
       }
       let attemptBest = null;
-      for(let localTry=0; localTry<8; localTry++){
+      for(let localTry=0; localTry<5; localTry++){
         const localUsed = new Set(Array.from(used));
         const proposed = makeGroupFromPools(5, choosePools(gi), localUsed, highRiskPairs, highRiskTriples, maxNum);
         if(proposed.length < 5) continue;
