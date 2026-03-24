@@ -409,31 +409,6 @@ function getGroupNamesForLottery(id){
   ];
 }
 
-function getCanonicalGeneratedGroups(bestResult, id){
-  const names = getGroupNamesForLottery(id);
-  const rawGroups = bestResult?.groups || {};
-  const canonical = bestResult?.canonicalGroups || {};
-  const byLabel = (index)=> Array.isArray(rawGroups[names[index]]) ? rawGroups[names[index]] : [];
-  const group1 = Array.isArray(canonical.group1) && canonical.group1.length ? canonical.group1 : byLabel(0);
-  const group2 = Array.isArray(canonical.group2) && canonical.group2.length ? canonical.group2 : byLabel(1);
-  const group3 = Array.isArray(canonical.group3) && canonical.group3.length ? canonical.group3 : byLabel(2);
-  const group4 = Array.isArray(canonical.group4) && canonical.group4.length ? canonical.group4 : byLabel(3);
-  const full = Array.isArray(canonical.full) && canonical.full.length ? canonical.full : (Array.isArray(rawGroups.full) ? rawGroups.full : (Array.isArray(rawGroups[names[4]]) ? rawGroups[names[4]] : []));
-  return {
-    group1: cleanupNumbers(group1, state.lotteries[id].cfg.maxNum),
-    group2: cleanupNumbers(group2, state.lotteries[id].cfg.maxNum),
-    group3: cleanupNumbers(group3, state.lotteries[id].cfg.maxNum),
-    group4: cleanupNumbers(group4, state.lotteries[id].cfg.maxNum),
-    full: cleanupNumbers(full, state.lotteries[id].cfg.maxNum)
-  };
-}
-
-function attachCanonicalGeneratedGroups(bestResult, id){
-  if(!bestResult) return bestResult;
-  bestResult.canonicalGroups = getCanonicalGeneratedGroups(bestResult, id);
-  return bestResult;
-}
-
 function getLockedGroupCount(id){
   return Object.keys(getLockedGroupMap(id) || {}).filter(k => Array.isArray(getLockedGroupMap(id)[k]) && getLockedGroupMap(id)[k].length === 5).length;
 }
@@ -446,19 +421,12 @@ function rebuildFullFromLocked(id){
   for(let i=1;i<=4;i++){ (locks[i] || []).forEach(n => used.add(n)); }
   const allNums = Array.from({length:s.cfg.maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
   const full = allNums.filter(n => !used.has(n)).slice(0, 19);
-  if(!s.generatedGroups) s.generatedGroups = { groups: {}, canonicalGroups: {} };
+  if(!s.generatedGroups) s.generatedGroups = { groups: {} };
   if(!s.generatedGroups.groups) s.generatedGroups.groups = {};
-  if(!s.generatedGroups.canonicalGroups) s.generatedGroups.canonicalGroups = {};
-  for(let i=1;i<=4;i++){
-    if(Array.isArray(locks[i]) && locks[i].length===5){
-      s.generatedGroups.groups[names[i-1]] = locks[i].slice();
-      s.generatedGroups.canonicalGroups[`group${i}`] = locks[i].slice();
-    }
-  }
+  for(let i=1;i<=4;i++){ if(Array.isArray(locks[i]) && locks[i].length===5) s.generatedGroups.groups[names[i-1]] = locks[i].slice(); }
   s.generatedGroups.groups[names[4]] = full;
-  s.generatedGroups.canonicalGroups.full = full.slice();
-  fillManualFieldsFromPlan(id, s.generatedGroups);
-  renderGroupPreview(id, attachCanonicalGeneratedGroups(s.generatedGroups, id));
+  fillManualFieldsFromPlan(id, s.generatedGroups.groups);
+  renderGroupPreview(id, s.generatedGroups);
   return full;
 }
 
@@ -502,8 +470,7 @@ function applySearchOverlayResult(id, bestResult){
   els.pill.textContent = bestResult.canNotify ? '可用候選' : '候選完成';
   for(let i=0;i<5;i++) {
     const cardEl = $(`searchCard_${i}`); const numsEl = $(`searchNums_${i}`); const hintEl = $(`searchHint_${i}`); const badgeEl = $(`searchBadge_${i}`); const lockBtn = $(`searchLockBtn_${i}`);
-    const canonicalGroups = getCanonicalGeneratedGroups(bestResult, id);
-    const nums = i < 4 ? (canonicalGroups[`group${i+1}`] || []) : (canonicalGroups.full || []);
+    const nums = (bestResult.groups && bestResult.groups[names[i]]) ? bestResult.groups[names[i]] : [];
     const detail = details[i] || null;
     const isLocked = i < 4 && Array.isArray(locks[i+1]) && locks[i+1].length === 5;
     if(cardEl){ cardEl.classList.remove('active'); cardEl.classList.toggle('locked', isLocked); }
@@ -522,8 +489,7 @@ function applySearchOverlayResult(id, bestResult){
     }
     if(lockBtn){ lockBtn.style.display = 'none'; lockBtn.disabled = true; }
   }
-  const canonicalGroupsReady = getCanonicalGeneratedGroups(bestResult, id);
-  const mainReady = [1,2,3,4].every(idx => Array.isArray(canonicalGroupsReady[`group${idx}`]) && canonicalGroupsReady[`group${idx}`].length === 5);
+  const mainReady = [0,1,2,3].every(idx => { const nums = (bestResult.groups && bestResult.groups[names[idx]]) ? bestResult.groups[names[idx]] : []; return Array.isArray(nums) && nums.length === 5; });
   if(mainReady){
     rebuildFullFromLocked(id);
     els.pill.textContent = bestResult.canNotify ? '可直接通報' : (bestResult.packStatus || '可觀察');
@@ -554,19 +520,16 @@ function lockCandidateGroupFromOverlay(id, groupIndex){
     showMiniNotice(`${s.cfg.title}：已解除第${groupIndex}組鎖定`, 'info');
     return;
   }
-  const canonicalGroups = getCanonicalGeneratedGroups(result, id);
-  const nums = canonicalGroups[`group${groupIndex}`] || [];
+  const nums = result?.groups?.[names[groupIndex-1]] || [];
   if(!Array.isArray(nums) || nums.length !== 5){
     showMiniNotice(`${s.cfg.title}：這組沒有有效 5 顆號碼，無法鎖定`, 'warn');
     return;
   }
   if(!s.smartLocks) s.smartLocks = {};
   s.smartLocks[groupIndex] = nums.slice();
-  if(!s.generatedGroups) s.generatedGroups = result || { groups: {}, canonicalGroups: {} };
+  if(!s.generatedGroups) s.generatedGroups = result || { groups: {} };
   if(!s.generatedGroups.groups) s.generatedGroups.groups = {};
-  if(!s.generatedGroups.canonicalGroups) s.generatedGroups.canonicalGroups = {};
   s.generatedGroups.groups[names[groupIndex-1]] = nums.slice();
-  s.generatedGroups.canonicalGroups[`group${groupIndex}`] = nums.slice();
   persistAll();
   applySearchOverlayResult(id, result);
   showMiniNotice(`${s.cfg.title}：已鎖定第${groupIndex}組`, 'ok');
@@ -2214,16 +2177,18 @@ function formatEta(ms){
       btn.textContent = "通報中...";
     }
 
-    const order = [
-      $(`${id}_prize1Desc`).value.trim() || "第一組",
-      $(`${id}_prize2Desc`).value.trim() || "第二組",
-      $(`${id}_prize3Desc`).value.trim() || "第三組",
-      $(`${id}_prize4Desc`).value.trim() || "第四組",
-      $(`${id}_prize5Desc`).value.trim() || "全車號碼"
-    ];
+    const order = getGeneratedPlanOrderNames(id);
 
-    const groups = s.generatedGroups.groups || {};
-    const normalizedGroups = getCanonicalGeneratedGroups(s.generatedGroups, id);
+    const repairedPlan = repairGeneratedPlanForTracking(id, s.generatedGroups, s.historyAnalysis || null);
+    if(repairedPlan) s.generatedGroups = repairedPlan;
+    const groups = repairedPlan?.groups || {};
+    const normalizedGroups = {
+      group1: cleanupNumbers(groups.group1 || [], s.cfg.maxNum),
+      group2: cleanupNumbers(groups.group2 || [], s.cfg.maxNum),
+      group3: cleanupNumbers(groups.group3 || [], s.cfg.maxNum),
+      group4: cleanupNumbers(groups.group4 || [], s.cfg.maxNum),
+      full: cleanupNumbers(groups.full || [], s.cfg.maxNum)
+    };
     const previewSnapshot = buildGenerationPreviewState(id, { ...s.generatedGroups, groups: normalizedGroups }, s.historyAnalysis || null);
     const analysisPayload = buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null);
     analysisPayload.previewSummary = previewSnapshot.summary || '';
@@ -2545,21 +2510,17 @@ function formatEta(ms){
 
   function getCurrentPlanGroupsForManual(id){
     const s = state.lotteries[id] || {};
-    const plan = s.generatedGroups && s.generatedGroups.groups ? s.generatedGroups.groups : null;
+    if(!s.generatedGroups) return null;
+    const repaired = repairGeneratedPlanForTracking(id, s.generatedGroups, s.historyAnalysis || null);
+    if(repaired) s.generatedGroups = repaired;
+    const plan = repaired && repaired.groups ? repaired.groups : null;
     if(!plan) return null;
-    const names = [
-      $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
-      $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
-      $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
-      $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
-      $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
-    ];
     return {
-      group1: Array.isArray(plan[names[0]]) ? plan[names[0]] : [],
-      group2: Array.isArray(plan[names[1]]) ? plan[names[1]] : [],
-      group3: Array.isArray(plan[names[2]]) ? plan[names[2]] : [],
-      group4: Array.isArray(plan[names[3]]) ? plan[names[3]] : [],
-      full: Array.isArray(plan[names[4]]) ? plan[names[4]] : []
+      group1: Array.isArray(plan.group1) ? plan.group1 : [],
+      group2: Array.isArray(plan.group2) ? plan.group2 : [],
+      group3: Array.isArray(plan.group3) ? plan.group3 : [],
+      group4: Array.isArray(plan.group4) ? plan.group4 : [],
+      full: Array.isArray(plan.full) ? plan.full : []
     };
   }
 
@@ -2601,6 +2562,117 @@ function makeGroupFromPools(targetSize, pools, used, highRiskPairs, highRiskTrip
 }
 
 
+function getGeneratedPlanOrderNames(id){
+  return [
+    $(`${id}_prize1Desc`)?.value?.trim() || '第一組',
+    $(`${id}_prize2Desc`)?.value?.trim() || '第二組',
+    $(`${id}_prize3Desc`)?.value?.trim() || '第三組',
+    $(`${id}_prize4Desc`)?.value?.trim() || '第四組',
+    $(`${id}_prize5Desc`)?.value?.trim() || '全車號碼'
+  ];
+}
+
+function repairGeneratedPlanForTracking(id, bestResult, analysis){
+  if(!bestResult || typeof bestResult !== 'object') return bestResult;
+  const lottery = state.lotteries[id] || {};
+  const maxNum = lottery?.cfg?.maxNum || 39;
+  const names = getGeneratedPlanOrderNames(id);
+  const rawGroups = bestResult?.groups || {};
+  const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+  const highRiskPairs = new Set(analysis?.highRiskPairs || []);
+  const highRiskTriples = new Set(analysis?.highRiskTriples || []);
+  const riskyNumbers = new Set(analysis?.riskyNumberSet ? Array.from(analysis.riskyNumberSet) : []);
+  const mid = cleanupNumbers(Array.isArray(analysis?.mid) ? analysis.mid : [], maxNum).filter(n => !riskyNumbers.has(n));
+  const warm = cleanupNumbers(Array.isArray(analysis?.warm) ? analysis.warm : [], maxNum).filter(n => !riskyNumbers.has(n));
+  const trendUp = cleanupNumbers(Array.isArray(analysis?.trendUp) ? analysis.trendUp : [], maxNum).filter(n => !riskyNumbers.has(n));
+  const hot = cleanupNumbers(Array.isArray(analysis?.hot) ? analysis.hot : [], maxNum);
+  const safeAll = allNums.filter(n => !riskyNumbers.has(n));
+  const fillPriority = cleanupNumbers([...mid, ...warm, ...trendUp, ...hot, ...safeAll, ...allNums], maxNum);
+
+  const pickSourceGroup = (idx, label) => {
+    const byLabel = Array.isArray(rawGroups[label]) ? rawGroups[label] : [];
+    const byCanonical = Array.isArray(rawGroups[`group${idx}`]) ? rawGroups[`group${idx}`] : [];
+    return cleanupNumbers(byLabel.length ? byLabel : byCanonical, maxNum);
+  };
+
+  const usedMain = new Set();
+  const repairedMains = [];
+  for(let i=0; i<4; i++){
+    const source = pickSourceGroup(i+1, names[i]);
+    const next = [];
+    const localSet = new Set();
+    source.forEach((n)=>{
+      if(next.length >= 5) return;
+      if(usedMain.has(n) || localSet.has(n)) return;
+      if(groupHasRisk(n, next, highRiskPairs, highRiskTriples)) return;
+      next.push(n);
+      localSet.add(n);
+    });
+    for(const n of fillPriority){
+      if(next.length >= 5) break;
+      if(usedMain.has(n) || localSet.has(n)) continue;
+      if(groupHasRisk(n, next, highRiskPairs, highRiskTriples)) continue;
+      next.push(n);
+      localSet.add(n);
+    }
+    for(const n of allNums){
+      if(next.length >= 5) break;
+      if(usedMain.has(n) || localSet.has(n)) continue;
+      next.push(n);
+      localSet.add(n);
+    }
+    const sorted = next.slice(0, 5).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+    sorted.forEach(v=>usedMain.add(v));
+    repairedMains.push(sorted);
+  }
+
+  const rawFull = cleanupNumbers((Array.isArray(rawGroups[names[4]]) ? rawGroups[names[4]] : []).concat(Array.isArray(rawGroups.full) ? rawGroups.full : []), maxNum);
+  const repairedFull = [];
+  const fullSet = new Set();
+  for(const n of [...rawFull, ...fillPriority, ...allNums]){
+    if(repairedFull.length >= 19) break;
+    if(usedMain.has(n) || fullSet.has(n)) continue;
+    repairedFull.push(n);
+    fullSet.add(n);
+  }
+  const sortedFull = repairedFull.slice(0, 19).sort((a,b)=>parseInt(a,10)-parseInt(b,10));
+
+  const normalizedGroups = {
+    group1: repairedMains[0] || [],
+    group2: repairedMains[1] || [],
+    group3: repairedMains[2] || [],
+    group4: repairedMains[3] || [],
+    full: sortedFull
+  };
+  const metrics = buildCandidatePlanMetrics([normalizedGroups.group1, normalizedGroups.group2, normalizedGroups.group3, normalizedGroups.group4], analysis || {});
+  return {
+    ...bestResult,
+    groups: {
+      ...(rawGroups || {}),
+      [names[0]]: normalizedGroups.group1,
+      [names[1]]: normalizedGroups.group2,
+      [names[2]]: normalizedGroups.group3,
+      [names[3]]: normalizedGroups.group4,
+      [names[4]]: normalizedGroups.full,
+      ...normalizedGroups
+    },
+    twoHitRisk: metrics.twoHitRisk,
+    threeHitRisk: metrics.threeHitRisk,
+    lowRiskGroups: metrics.groupDetails.filter(v => v.status === '可用').length,
+    mediumRiskGroups: metrics.groupDetails.filter(v => v.status === '可觀察').length,
+    rejectedGroups: metrics.groupDetails.filter(v => v.status === '高風險').length,
+    detailScores: metrics.detailScores,
+    candidateTotalScore: metrics.totalScore,
+    packStatus: metrics.packStatus,
+    canNotify: metrics.canNotify,
+    groupDetails: metrics.groupDetails,
+    noQualifiedResult: !metrics.canNotify && !!bestResult?.noQualifiedResult,
+    score: Number(Math.max(40, (99 - metrics.totalScore)).toFixed(1))
+  };
+}
+
+
+
 function getManualFieldLimits(fieldKey){
   if(fieldKey === 'manualFull') return { maxCount: 19, allowOverlap: false };
   if(/^manualGroup[1-4]$/.test(fieldKey)) return { maxCount: 5, allowOverlap: false };
@@ -2608,20 +2680,28 @@ function getManualFieldLimits(fieldKey){
 }
 
 function fillManualFieldsFromPlan(id, groups){
-  const canonicalGroups = getCanonicalGeneratedGroups({ groups: (groups && groups.groups) ? groups.groups : groups, canonicalGroups: groups?.canonicalGroups || null }, id);
-  const mapping = [
-    ['manualGroup1', canonicalGroups.group1],
-    ['manualGroup2', canonicalGroups.group2],
-    ['manualGroup3', canonicalGroups.group3],
-    ['manualGroup4', canonicalGroups.group4],
-    ['manualFull', canonicalGroups.full]
+  const names = [
+    $(`${id}_prize1Desc`).value.trim() || '第一組',
+    $(`${id}_prize2Desc`).value.trim() || '第二組',
+    $(`${id}_prize3Desc`).value.trim() || '第三組',
+    $(`${id}_prize4Desc`).value.trim() || '第四組',
+    $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
-  mapping.forEach(([fieldKey, values]) => {
+  const mapping = [
+    ['manualGroup1', names[0]],
+    ['manualGroup2', names[1]],
+    ['manualGroup3', names[2]],
+    ['manualGroup4', names[3]],
+    ['manualFull', names[4]]
+  ];
+  mapping.forEach(([fieldKey, groupName]) => {
     const input = $(`${id}_${fieldKey}`);
-    if(input) input.value = (Array.isArray(values) ? values : []).join(' ');
+    if(input){
+      const values = Array.isArray(groups[groupName]) ? groups[groupName] : [];
+      input.value = values.join(' ');
+    }
   });
 }
-
 
 function clearManualFields(id){
   ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
@@ -3125,14 +3205,6 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     const metrics = buildCandidatePlanMetrics(mains, analysis);
     return {
       groups,
-      canonicalGroups: {
-        group1: (groups[groupNames[0]] || []).slice(),
-        group2: (groups[groupNames[1]] || []).slice(),
-        group3: (groups[groupNames[2]] || []).slice(),
-        group4: (groups[groupNames[3]] || []).slice(),
-        full: (groups[groupNames[4]] || []).slice()
-      },
-      groupLabels: groupNames.slice(),
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
@@ -3258,14 +3330,6 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     groups[groupNames[3]] = finalGroups[groupNames[3]];
     const candidate = {
       groups,
-      canonicalGroups: {
-        group1: (groups[groupNames[0]] || []).slice(),
-        group2: (groups[groupNames[1]] || []).slice(),
-        group3: (groups[groupNames[2]] || []).slice(),
-        group4: (groups[groupNames[3]] || []).slice(),
-        full: (groups[groupNames[4]] || []).slice()
-      },
-      groupLabels: groupNames.slice(),
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
@@ -3350,14 +3414,15 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   await sleep(120);
   try {
     const bestResult = await buildSmartGroups(id, analysis);
-    state.lotteries[id].generatedGroups = attachCanonicalGeneratedGroups(bestResult, id);
-    const preview = buildGenerationPreviewState(id, state.lotteries[id].generatedGroups, analysis);
-    state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
+    const repairedResult = repairGeneratedPlanForTracking(id, bestResult, analysis);
+    state.lotteries[id].generatedGroups = repairedResult;
+    const preview = buildGenerationPreviewState(id, repairedResult, analysis);
+    state.lastGenerationPreview = { lotteryId:id, generated:repairedResult, analysis, preview };
     setLockedGroupsFromPreview(id, preview);
-    renderGroupPreview(id, state.lotteries[id].generatedGroups);
-    fillManualFieldsFromPlan(id, state.lotteries[id].generatedGroups);
-    setConfirmAvailability(id, true, bestResult.canNotify ? '已完成完整分析，可直接通報' : '已完成分析，可自行決定是否通報');
-    showMiniNotice(`${state.lotteries[id].cfg.title}：已自動分組，完整分析已直接顯示在預覽區，下方可直接按通報`, bestResult.canNotify === false ? 'warn' : 'ok');
+    renderGroupPreview(id, repairedResult);
+    fillManualFieldsFromPlan(id, repairedResult.groups);
+    setConfirmAvailability(id, true, repairedResult.canNotify ? '已完成完整分析，可直接通報' : '已完成分析，可自行決定是否通報');
+    showMiniNotice(`${state.lotteries[id].cfg.title}：已自動分組，完整分析已直接顯示在預覽區，下方可直接按通報`, repairedResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
     console.error(err);
     state.lotteries[id].generatedGroups = null;
@@ -3766,13 +3831,14 @@ function setBroadcastMode(mode){
 }
 
 function buildGenerationPreviewState(id, bestResult, analysis){
+  const repaired = repairGeneratedPlanForTracking(id, bestResult, analysis);
   const orderNames = [
     $(`${id}_prize1Desc`).value.trim() || '第一組',
     $(`${id}_prize2Desc`).value.trim() || '第二組',
     $(`${id}_prize3Desc`).value.trim() || '第三組',
     $(`${id}_prize4Desc`).value.trim() || '第四組'
   ];
-  const rawGroups = bestResult?.groups || {};
+  const rawGroups = repaired?.groups || bestResult?.groups || {};
   const allGroupValues = Object.values(rawGroups).filter(v => Array.isArray(v));
   const fallbackMainGroups = orderNames.map((name, idx) => {
     if (Array.isArray(rawGroups[name]) && rawGroups[name].length) return rawGroups[name];
@@ -3780,12 +3846,12 @@ function buildGenerationPreviewState(id, bestResult, analysis){
     const positional = allGroupValues[idx];
     return Array.isArray(positional) ? positional : [];
   });
-  const metrics = bestResult?.groupDetails?.length ? {
-    groupDetails: bestResult.groupDetails,
-    packStatus: bestResult.packStatus || '不可通報',
-    canNotify: !!bestResult.canNotify,
-    watchCount: (bestResult.groupDetails || []).filter(g => g.status === '可觀察').length,
-    highCount: (bestResult.groupDetails || []).filter(g => g.status === '高風險').length
+  const metrics = repaired?.groupDetails?.length ? {
+    groupDetails: repaired.groupDetails,
+    packStatus: repaired.packStatus || '不可通報',
+    canNotify: !!repaired.canNotify,
+    watchCount: (repaired.groupDetails || []).filter(g => g.status === '可觀察').length,
+    highCount: (repaired.groupDetails || []).filter(g => g.status === '高風險').length
   } : buildCandidatePlanMetrics(fallbackMainGroups, analysis || {});
   const groupRows = (metrics.groupDetails || []).map((detail, idx)=>{
     const fallbackNums = Array.isArray(fallbackMainGroups[idx]) ? fallbackMainGroups[idx] : [];
@@ -3811,7 +3877,7 @@ function buildGenerationPreviewState(id, bestResult, analysis){
   let summary = '四組已通過驗收，可直接通報。';
   let canNotify = !!metrics.canNotify;
   let packStatus = metrics.packStatus || (highCount > 0 ? '不可通報' : watchCount > 1 ? '勉強可用' : '可通報');
-  if (!hasAnyNumbers || bestResult?.noQualifiedResult) {
+  if (!hasAnyNumbers || repaired?.noQualifiedResult) {
     summary = '本輪沒有找到可直接通報方案，請查看備選組合後重新生成。';
     canNotify = false;
     packStatus = '不可通報';
