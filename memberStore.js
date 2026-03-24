@@ -81,23 +81,7 @@ function sanitizeDevice(device) {
     firstLoginAt: device.firstLoginAt || '',
     lastSeenAt: device.lastSeenAt || '',
     lastIp: device.lastIp || '',
-    locationLabel: device.locationLabel || '',
     status: device.status || 'active'
-  };
-}
-
-function sanitizeAdminLog(log) {
-  if (!log) return null;
-  return {
-    id: log.id,
-    action: log.action || '',
-    adminUsername: log.adminUsername || '',
-    targetUserId: log.targetUserId || '',
-    targetUsername: log.targetUsername || '',
-    detail: log.detail || '',
-    ip: log.ip || '',
-    locationLabel: log.locationLabel || '',
-    createdAt: log.createdAt || ''
   };
 }
 
@@ -138,6 +122,40 @@ function sanitizeKey(key) {
     usedBy: key.usedBy || '',
     note: key.note || ''
   };
+}
+
+function describeIp(ip = '') {
+  const v = String(ip || '').trim();
+  if (!v) return '未知來源';
+  if (v === '::1' || v === '127.0.0.1' || v.startsWith('127.') || v === '::ffff:127.0.0.1' || v.startsWith('::ffff:127.')) return '本機 localhost';
+  if (v.startsWith('192.168.') || v.startsWith('10.') || /^172\.(1[6-9]|2\d|3[0-1])\./.test(v)) return '內網 / 區域網路';
+  if (v.includes(':')) return 'IPv6 網路';
+  return '外部網路';
+}
+
+function sanitizeAdminLog(item) {
+  if (!item) return null;
+  return {
+    id: item.id,
+    action: item.action || '',
+    actor: item.actor || '',
+    target: item.target || '',
+    detail: item.detail || '',
+    createdAt: item.createdAt || ''
+  };
+}
+
+function addAdminLog(store, adminUser, action, target, detail = '') {
+  if (!Array.isArray(store.adminLogs)) store.adminLogs = [];
+  store.adminLogs.unshift({
+    id: randomId('log'),
+    action,
+    actor: adminUser?.username || 'system',
+    target: String(target || '').trim(),
+    detail: String(detail || '').trim(),
+    createdAt: nowIso()
+  });
+  store.adminLogs = store.adminLogs.slice(0, 500);
 }
 
 function defaultStore() {
@@ -235,25 +253,8 @@ function normalizeDeviceInfo(deviceInfo = {}, fallback = {}) {
     deviceId,
     deviceName: String(deviceInfo.deviceName || fallback.deviceName || '未知設備').trim().slice(0, 120),
     userAgent: String(deviceInfo.userAgent || fallback.userAgent || '').trim().slice(0, 300),
-    ip: String(deviceInfo.ip || fallback.ip || '').trim().slice(0, 80),
-    locationLabel: String(deviceInfo.locationLabel || fallback.locationLabel || '').trim().slice(0, 120)
+    ip: String(deviceInfo.ip || fallback.ip || '').trim().slice(0, 80)
   };
-}
-
-function appendAdminLog(store, action, adminUser, payload = {}) {
-  store.adminLogs = Array.isArray(store.adminLogs) ? store.adminLogs : [];
-  store.adminLogs.unshift({
-    id: randomId('log'),
-    action: String(action || '').trim(),
-    adminUsername: adminUser?.username || 'system',
-    targetUserId: payload.targetUserId || '',
-    targetUsername: payload.targetUsername || '',
-    detail: payload.detail || '',
-    ip: payload.ip || '',
-    locationLabel: payload.locationLabel || '',
-    createdAt: nowIso()
-  });
-  if (store.adminLogs.length > 500) store.adminLogs = store.adminLogs.slice(0, 500);
 }
 
 function ensureMemberDevice(store, user, deviceInfo = {}) {
@@ -275,7 +276,6 @@ function ensureMemberDevice(store, user, deviceInfo = {}) {
       firstLoginAt: currentTime,
       lastSeenAt: currentTime,
       lastIp: deviceInfo.ip || '',
-      locationLabel: deviceInfo.locationLabel || '',
       status: 'active'
     };
     store.devices.push(device);
@@ -284,7 +284,6 @@ function ensureMemberDevice(store, user, deviceInfo = {}) {
     device.userAgent = deviceInfo.userAgent || device.userAgent || '';
     device.lastSeenAt = currentTime;
     device.lastIp = deviceInfo.ip || device.lastIp || '';
-    device.locationLabel = deviceInfo.locationLabel || device.locationLabel || '';
   }
   return sanitizeDevice(device);
 }
@@ -334,7 +333,6 @@ function findUserByToken(token, deviceInfo = {}) {
       device.lastSeenAt = nowIso();
       device.lastIp = normalizedDevice.ip || device.lastIp || '';
       device.userAgent = normalizedDevice.userAgent || device.userAgent || '';
-      device.locationLabel = normalizedDevice.locationLabel || device.locationLabel || '';
       if (normalizedDevice.deviceName) device.deviceName = normalizedDevice.deviceName;
       saveStore(store);
     }
@@ -373,7 +371,7 @@ function listMembers() {
   return store.users.map(user => sanitizeUser(user, store)).sort((a, b) => String(a.username).localeCompare(String(b.username), 'zh-Hant'));
 }
 
-function createMember(payload = {}, adminUser, meta = {}) {
+function createMember(payload = {}, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const username = String(payload.username || '').trim();
@@ -396,12 +394,12 @@ function createMember(payload = {}, adminUser, meta = {}) {
     accessKeyId: String(payload.accessKeyId || '').trim()
   };
   store.users.push(member);
-  appendAdminLog(store, 'create_member', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `新增會員（方案：${member.planType}）`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '新增會員', username, `方案:${member.planType} 到期:${member.expiresAt}`);
   saveStore(store);
   return sanitizeUser(member, store);
 }
 
-function updateMember(memberId, payload = {}, adminUser, meta = {}) {
+function updateMember(memberId, payload = {}, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
@@ -426,19 +424,19 @@ function updateMember(memberId, payload = {}, adminUser, meta = {}) {
   }
   if (payload.password) member.password = makePasswordRecord(String(payload.password));
   member.updatedAt = nowIso();
-  appendAdminLog(store, 'update_member', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: '更新會員資料', ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '更新會員', member.username, `狀態:${member.status} 方案:${member.planType}`);
   saveStore(store);
   return sanitizeUser(member, store);
 }
 
-function extendMember(memberId, payload = {}, adminUser, meta = {}) {
+function extendMember(memberId, payload = {}, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
   if (!member) throw new Error('找不到會員');
   Object.assign(member, buildExpiry(payload.planType || member.planType || 'month', payload.durationDays, member.expiresAt));
   member.updatedAt = nowIso();
-  appendAdminLog(store, 'extend_member', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `續期（方案：${payload.planType || member.planType || 'month'}）`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '會員續期', member.username, `方案:${member.planType} 到期:${member.expiresAt}`);
   saveStore(store);
   return sanitizeUser(member, store);
 }
@@ -451,7 +449,7 @@ function listMemberDevices(memberId, adminUser) {
   return getUserDevices(store, member.id);
 }
 
-function removeMemberDevice(memberId, deviceId, adminUser, meta = {}) {
+function removeMemberDevice(memberId, deviceId, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
@@ -460,24 +458,24 @@ function removeMemberDevice(memberId, deviceId, adminUser, meta = {}) {
   store.devices = store.devices.filter(d => !(d.userId === member.id && d.id === deviceId));
   store.sessions = store.sessions.filter(s => !(s.userId === member.id && s.deviceId === deviceId));
   if (before === store.devices.length) throw new Error('找不到綁定設備');
-  appendAdminLog(store, 'remove_device', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `移除設備：${deviceId}`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '移除設備', member.username, `設備:${deviceId}`);
   saveStore(store);
   return getUserDevices(store, member.id);
 }
 
-function clearMemberDevices(memberId, adminUser, meta = {}) {
+function clearMemberDevices(memberId, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
   if (!member) throw new Error('找不到會員');
   store.devices = store.devices.filter(d => d.userId !== member.id);
   store.sessions = store.sessions.filter(s => s.userId !== member.id);
-  appendAdminLog(store, 'clear_devices', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: '清空全部綁定設備', ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '清空設備', member.username, '清空此會員全部設備');
   saveStore(store);
   return [];
 }
 
-function generateAccessKeys(payload = {}, adminUser, meta = {}) {
+function generateAccessKeys(payload = {}, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const count = Math.max(1, Math.min(200, Number(payload.count || 1)));
@@ -500,7 +498,7 @@ function generateAccessKeys(payload = {}, adminUser, meta = {}) {
     store.accessKeys.unshift(item);
     created.push(sanitizeKey(item));
   }
-  appendAdminLog(store, 'generate_keys', adminUser, { detail: `生成 ${created.length} 組金鑰（${planType}/${durationDays}天）`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '生成金鑰', '', `數量:${count} 方案:${planType}`);
   saveStore(store);
   return created;
 }
@@ -510,7 +508,7 @@ function listAccessKeys() {
   return store.accessKeys.map(sanitizeKey);
 }
 
-function redeemAccessKey(code, targetUserId, adminUser, meta = {}) {
+function redeemAccessKey(code, targetUserId, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const key = store.accessKeys.find(k => String(k.code).trim().toUpperCase() === String(code || '').trim().toUpperCase());
@@ -524,23 +522,21 @@ function redeemAccessKey(code, targetUserId, adminUser, meta = {}) {
   key.status = 'used';
   key.usedAt = nowIso();
   key.usedBy = member.username;
-  appendAdminLog(store, 'redeem_key', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `套用金鑰：${key.code}`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  addAdminLog(store, adminUser, '套用金鑰', member.username, `金鑰:${key.code}`);
   saveStore(store);
   return { member: sanitizeUser(member, store), key: sanitizeKey(key) };
 }
 
 
-function renameMemberDevice(memberId, deviceId, deviceName, adminUser, meta = {}) {
+function renameMemberDevice(memberId, deviceId, deviceName, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
   if (!member) throw new Error('找不到會員');
   const device = store.devices.find(d => d.userId === member.id && d.id === deviceId && d.status !== 'removed');
   if (!device) throw new Error('找不到綁定設備');
-  const cleanName = String(deviceName || '').trim().slice(0, 120);
-  if (!cleanName) throw new Error('請輸入設備名稱');
-  device.deviceName = cleanName;
-  appendAdminLog(store, 'rename_device', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `設備改名：${cleanName}`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  device.deviceName = String(deviceName || '').trim().slice(0, 120) || device.deviceName || '未知設備';
+  addAdminLog(store, adminUser, '設備改名', member.username, `設備:${device.id} 名稱:${device.deviceName}`);
   saveStore(store);
   return getUserDevices(store, member.id);
 }
@@ -549,6 +545,10 @@ function listAdminLogs(adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
   return (store.adminLogs || []).map(sanitizeAdminLog);
+}
+
+function describeLoginSource(ip = '') {
+  return describeIp(ip);
 }
 
 module.exports = {
@@ -567,5 +567,6 @@ module.exports = {
   generateAccessKeys,
   listAccessKeys,
   redeemAccessKey,
-  listAdminLogs
+  listAdminLogs,
+  describeLoginSource
 };
