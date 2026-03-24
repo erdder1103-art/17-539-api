@@ -1481,29 +1481,56 @@ function formatEta(ms){
     const box = getEls(id).groupPreview;
     box.innerHTML = "";
 
-    const order = [
-      $(`${id}_prize1Desc`).value.trim() || "第一組",
-      $(`${id}_prize2Desc`).value.trim() || "第二組",
-      $(`${id}_prize3Desc`).value.trim() || "第三組",
-      $(`${id}_prize4Desc`).value.trim() || "第四組",
-      $(`${id}_prize5Desc`).value.trim() || "全車號碼"
-    ];
+    const preview = buildGenerationPreviewState(id, bestResult, state.lotteries[id].historyAnalysis || null);
+    const summary = preview?.summary || bestResult?.summary || '已完成自動分組';
+    const recommendation = preview?.recommendation || null;
+    const report = renderPreviewDetailedReport(preview) || '';
+    const statusColor = preview?.canNotify === false ? '#ffd0d0' : '#dfffbf';
+    const fullNumbers = Array.isArray(preview?.fullNumbers) ? preview.fullNumbers : [];
 
-    order.forEach((name, idx)=>{
-      const nums = bestResult.groups[name] || [];
-      const row = document.createElement("div");
-      row.className = "groupRow";
-      row.innerHTML = `
-        <b>${escapeHtml(name)}</b> ${escapeHtml(nums.join("、"))}
-        ${idx < 4 ? `<div class="riskText">目標：盡可能避免 2 顆 / 3 顆碰撞</div>` : `<div class="riskText">剩餘號碼全部放入</div>`}
-      `;
-      box.appendChild(row);
-    });
+    const sections = [];
+    sections.push(`
+      <div class="groupRow">
+        <b>分析結果</b>
+        <div style="margin-top:8px;line-height:1.85;white-space:pre-wrap;color:${statusColor};">${escapeHtml(summary)}</div>
+      </div>
+    `);
 
-    const row = document.createElement("div");
-    row.className = "groupRow";
-    row.innerHTML = `<b>風險摘要</b><span style="color:#ffe7a8;">歷史 2 碰撞次數：${bestResult.twoHitRisk} ｜ 歷史 3 碰撞次數：${bestResult.threeHitRisk}</span>`;
-    box.appendChild(row);
+    if(recommendation){
+      sections.push(`
+        <div class="groupRow">
+          <b>整體判讀</b>
+          <div style="margin-top:8px;line-height:1.85;">
+            通報狀態：${escapeHtml(preview?.packStatus || '-')}
+            <br>通過傾向：${escapeHtml(String(Number(recommendation.passTendency || 0).toFixed(1)))}%
+            <br>風險等級：${escapeHtml(String(recommendation.riskLevel || '-'))}
+            <br>分析可信度：${escapeHtml(String(Number(recommendation.reliability || 0).toFixed(1)))}
+            <br>最佳組：${escapeHtml(recommendation.bestGroupText || '尚無')}
+            <br>風險組：${escapeHtml(recommendation.riskGroupText || '尚無')}
+          </div>
+        </div>
+      `);
+    }
+
+    if(report){
+      sections.push(`
+        <div class="groupRow">
+          <b>四組完整分析</b>
+          <div style="margin-top:8px;line-height:1.9;white-space:pre-wrap;">${escapeHtml(report)}</div>
+        </div>
+      `);
+    }
+
+    if(fullNumbers.length){
+      sections.push(`
+        <div class="groupRow">
+          <b>全車號碼</b>
+          <div style="margin-top:8px;line-height:1.8;">${escapeHtml(fullNumbers.join('、'))}</div>
+        </div>
+      `);
+    }
+
+    box.innerHTML = sections.join('');
   }
 
   function applyGeneratedGroupsToLog(id, groups){
@@ -2375,7 +2402,6 @@ function formatEta(ms){
       };
       const blocks = [];
       if(active.length) blocks.push(`<div class="small" style="margin:6px 0 8px;color:#cbd5e1;">待開獎追蹤（${active.length}）</div>${active.map((row)=>renderTrackingRow(row,'active')).join('')}`);
-      if(completed.length) blocks.push(`<div class="small" style="margin:12px 0 8px;color:#94a3b8;">已結算追蹤（${completed.length}）</div>${completed.slice(0,20).map((row)=>renderTrackingRow(row,'completed')).join('')}`);
       if(cancelled.length) blocks.push(`<div class="small" style="margin:12px 0 8px;color:#94a3b8;">已取消／已被取代（${cancelled.length}）</div>${cancelled.slice(0,20).map((row)=>renderTrackingRow(row,'cancelled')).join('')}`);
       box.innerHTML = blocks.length ? blocks.join('') : '<span class="muted">目前沒有追蹤紀錄</span>';
       Array.from(box.querySelectorAll('.btnCheckNowTracking')).forEach((btn)=>{
@@ -3020,10 +3046,6 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     $(`${id}_prize4Desc`).value.trim() || '第四組',
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
-    openGenerationPreview(id, bestResult, analysis);
-    const lockedNow = Object.keys(setLockedGroupsFromPreview(id, state.lastGenerationPreview?.preview || null)).length;
-    const lockMsg = lockedNow ? `，已鎖定 ${lockedNow} 組較穩方案` : '';
-    showMiniNotice(bestResult.canNotify === false ? `${state.lotteries[id].cfg.title}：本輪沒有找到合格方案${lockMsg}，請依預覽決定是否重生` : `${state.lotteries[id].cfg.title}：已生成方案${lockMsg}，請先看分析再決定是否通報`, bestResult.canNotify === false ? 'warn' : 'ok');
   let qualified = null;
   let fallback = null;
 
@@ -3278,18 +3300,18 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   const originalText = btn.textContent;
   btn.textContent = '生成中...';
   setConfirmAvailability(id, false, "系統正在生成可用方案");
-  openSearchOverlay(id);
-  const startedAt = Date.now();
-  updateSearchOverlay(id, { searched: 0, target: 5, elapsedMs: 0, stageLabel: `分析${getRecentHistoryWindowText()}`, statusText: '生成中', footerText: `系統正在分析${getRecentHistoryWindowText()}高風險雙號 / 三連號與熱中冷分布。` });
+  getEls(id).groupPreview.innerHTML = `<div class="groupRow"><b>系統生成中</b><div style="margin-top:8px;color:#ffe7a8;line-height:1.8;">正在依${escapeHtml(getRecentHistoryWindowText())}熱號 / 中熱 / 高風險雙連號 / 三連號自動分組，完成後會直接顯示完整分析。</div></div>`;
   await sleep(120);
   try {
-    const bestResult = await buildSmartGroups(id, analysis, (p)=>updateSearchOverlay(id, p));
+    const bestResult = await buildSmartGroups(id, analysis);
     state.lotteries[id].generatedGroups = bestResult;
-    await lockSearchResult(id, bestResult);
+    const preview = buildGenerationPreviewState(id, bestResult, analysis);
+    state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
+    setLockedGroupsFromPreview(id, preview);
     renderGroupPreview(id, bestResult);
     fillManualFieldsFromPlan(id, bestResult.groups);
-    const lockedNow = getLockedGroupCount(id);
-    showMiniNotice(`${state.lotteries[id].cfg.title}：已生成候選方案，可直接通報或再生成比較`, bestResult.canNotify === false ? 'warn' : 'ok');
+    setConfirmAvailability(id, true, bestResult.canNotify ? '已完成完整分析，可直接通報' : '已完成分析，可自行決定是否通報');
+    showMiniNotice(`${state.lotteries[id].cfg.title}：已自動分組，完整分析已直接顯示在預覽區，下方可直接按通報`, bestResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
     console.error(err);
     state.lotteries[id].generatedGroups = null;
@@ -3464,50 +3486,6 @@ function ensureTaskCenterUI(){
       </div>
     </div>`;
   document.body.appendChild(modal);
-
-  const previewModal = document.createElement('div');
-  previewModal.id = 'generationPreviewModal';
-  previewModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10032;backdrop-filter:blur(2px)';
-  previewModal.innerHTML = `
-    <div style="width:min(920px,96vw);max-height:90vh;overflow:auto;border-radius:22px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.98), rgba(30,5,5,.97));box-shadow:0 20px 55px rgba(0,0,0,.55);padding:18px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-        <div>
-          <div style="font-size:24px;font-weight:900;color:#ffe7a8;">生成後分析預覽</div>
-          <div class="small" style="margin-top:4px;">先看四組是否夠乾淨，再決定要不要通報。</div>
-        </div>
-        <div class="btns" style="margin-top:0;">
-          <button type="button" class="secondary" id="generationPreviewClose">關閉</button>
-        </div>
-      </div>
-      <div class="analysisPanel" style="margin-top:14px;">
-        <div class="analysisTitle">整體結論</div>
-        <div id="generationPreviewSummary" class="small" style="line-height:1.8;white-space:pre-wrap;">先生成結果，再決定是否通報</div>
-      </div>
-      <div class="analysisWrap" style="margin-top:14px;grid-template-columns:repeat(3,minmax(0,1fr));">
-        <div class="metricCard"><div class="label">通過傾向</div><div class="num" id="generationPreviewPass">-</div></div>
-        <div class="metricCard"><div class="label">風險等級</div><div class="num" id="generationPreviewLevel">-</div></div>
-        <div class="metricCard"><div class="label">分析可信度</div><div class="num" id="generationPreviewReliability">-</div></div>
-      </div>
-      <div class="analysisWrap" style="margin-top:14px;grid-template-columns:1fr 1fr;">
-        <div class="analysisPanel">
-          <div class="analysisTitle">最穩組</div>
-          <div id="generationPreviewBest" class="small" style="line-height:1.8;white-space:pre-wrap;">尚無</div>
-        </div>
-        <div class="analysisPanel">
-          <div class="analysisTitle">優先留意</div>
-          <div id="generationPreviewRisk" class="small" style="line-height:1.8;white-space:pre-wrap;">尚無</div>
-        </div>
-      </div>
-      <div class="analysisPanel" style="margin-top:14px;">
-        <div class="analysisTitle">四組快速判定</div>
-        <div id="generationPreviewGroups" class="small" style="line-height:1.9;"></div>
-      </div>
-      <div class="btns">
-        <button type="button" class="secondary" id="generationPreviewRegen">重新生成</button>
-        <button type="button" class="green" id="generationPreviewConfirm">確認通報</button>
-      </div>
-    </div>`;
-  document.body.appendChild(previewModal);
   const broadcastModal = document.createElement('div');
   broadcastModal.id = 'broadcastModal';
   broadcastModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:18px;z-index:10031;backdrop-filter:blur(2px)';
@@ -3854,68 +3832,10 @@ function renderPreviewDetailedReport(preview){
   return sections.join('\n\n');
 }
 
-function openGenerationPreview(id, bestResult, analysis){
-  ensureTaskCenterUI();
-  const modal = $('generationPreviewModal');
-  if(!modal) return;
-  closeSearchOverlay(true);
-  const preview = buildGenerationPreviewState(id, bestResult, analysis);
-  state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
-  if($('generationPreviewSummary')) $('generationPreviewSummary').textContent = preview.summary;
-  const rec = preview.recommendation || null;
-  if($('generationPreviewPass')) $('generationPreviewPass').textContent = rec ? `${Number(rec.passTendency || 0).toFixed(1)}%` : '-';
-  if($('generationPreviewLevel')) $('generationPreviewLevel').textContent = rec ? String(rec.riskLevel || '-') : '-';
-  if($('generationPreviewReliability')) $('generationPreviewReliability').textContent = rec ? String(Number(rec.reliability || 0).toFixed ? Number(rec.reliability || 0).toFixed(1) : rec.reliability) : '-';
-  if($('generationPreviewBest')) $('generationPreviewBest').textContent = preview.best ? `第${preview.best.idx}組｜${preview.best.nums.join('、')}
-${preview.best.reason}` : '尚無';
-  if($('generationPreviewRisk')) $('generationPreviewRisk').textContent = preview.worst ? `第${preview.worst.idx}組｜${preview.worst.nums.join('、')}
-${preview.worst.reason}` : '尚無';
-  if($('generationPreviewGroups')) $('generationPreviewGroups').innerHTML = `
-    <div style="padding:12px 14px;border:1px solid rgba(255,255,255,.09);border-radius:14px;white-space:pre-wrap;line-height:1.8;">${escapeHtml(renderPreviewDetailedReport(preview) || '尚無分析')}</div>
-  `;
-  const confirmBtn = $('generationPreviewConfirm');
-  if(confirmBtn){
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = '確認通報';
-    confirmBtn.style.opacity = '1';
-    confirmBtn.style.cursor = 'pointer';
-  }
-  modal.style.pointerEvents = 'auto';
-  modal.style.display = 'flex';
-}
-
-function closeGenerationPreview(){
-  if($('generationPreviewModal')) $('generationPreviewModal').style.display = 'none';
-}
-
-function rerunLatestGenerationPreview(){
-  const p = state.lastGenerationPreview;
-  closeGenerationPreview();
-  if(!p || !p.lotteryId) return;
-  $(`${p.lotteryId}_btnGenerateSmart`)?.click();
-}
-
-async function confirmLatestGenerationPreview(){
-  const p = state.lastGenerationPreview;
-  if(!p || !p.lotteryId) return;
-  const btn = $('generationPreviewConfirm');
-  const oldText = btn ? btn.textContent : '';
-  if(btn){ btn.disabled = true; btn.textContent = '通報中...'; }
-  try{
-    const ok = await confirmTracking(p.lotteryId);
-    if(ok){
-      showMiniNotice(`${state.lotteries[p.lotteryId].cfg.title}：通報成功`, 'ok');
-      closeGenerationPreview();
-      clearLockedGroups(p.lotteryId);
-    }else{
-      showMiniNotice(`${state.lotteries[p.lotteryId].cfg.title}：通報失敗，請檢查 TG 設定或稍後再試`, 'warn');
-    }
-  }catch(err){
-    showMiniNotice(`${state.lotteries[p.lotteryId].cfg.title}：通報失敗：${err.message || '未知錯誤'}`, 'warn');
-  }finally{
-    if(btn){ btn.disabled = false; btn.textContent = oldText || '確認通報'; }
-  }
-}
+function openGenerationPreview(){ return; }
+function closeGenerationPreview(){ return; }
+function rerunLatestGenerationPreview(){ return; }
+async function confirmLatestGenerationPreview(){ return; }
 
 function openBroadcastCenter(){
   ensureTaskCenterUI();
@@ -4015,10 +3935,6 @@ function clearBroadcastForm(){
     $('broadcastText')?.addEventListener('input', renderBroadcastPreview);
     $('broadcastChatIds')?.addEventListener('input', renderBroadcastPreview);
     $('broadcastFile')?.addEventListener('change', onBroadcastFileChange);
-    $('generationPreviewClose')?.addEventListener('click', closeGenerationPreview);
-    $('generationPreviewRegen')?.addEventListener('click', rerunLatestGenerationPreview);
-    $('generationPreviewConfirm')?.addEventListener('click', confirmLatestGenerationPreview);
-    $('generationPreviewModal')?.addEventListener('click', (e)=>{ if(e.target === $('generationPreviewModal')) closeGenerationPreview(); });
 
     await initLottery("ttl", restored);
     await initLottery("l539", restored);
