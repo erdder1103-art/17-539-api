@@ -14,6 +14,7 @@ const { getBotRuntimeSummary, testTelegramSend, callTelegram, broadcastTelegramM
 const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
 const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug, getDataFile, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
+const { loginMember, findUserByToken, logoutMember, getMemberBootstrapInfo } = require('./memberStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -39,6 +40,57 @@ app.get('/', (req, res) => {
 app.get('/index.html', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+function getAuthTokenFromRequest(req) {
+  const headerToken = String(req.headers['x-auth-token'] || '').trim();
+  if (headerToken) return headerToken;
+  const authHeader = String(req.headers.authorization || '').trim();
+  const bearer = authHeader.match(/^Bearer\s+(.+)$/i);
+  return bearer ? bearer[1].trim() : '';
+}
+
+app.get('/api/auth/bootstrap', (req, res) => {
+  res.json({ ok: true, bootstrap: getMemberBootstrapInfo() });
+});
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const username = String(req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, message: '請輸入帳號與密碼' });
+    }
+    const result = loginMember(username, password);
+    return res.json({ ok: true, token: result.token, user: result.user, expiresAt: result.expiresAt, isDefaultAdmin: result.isDefaultAdmin });
+  } catch (err) {
+    return res.status(401).json({ ok: false, message: err.message || '登入失敗' });
+  }
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const token = getAuthTokenFromRequest(req);
+  const found = findUserByToken(token);
+  if (!found) return res.status(401).json({ ok: false, message: '登入已失效，請重新登入' });
+  res.json({ ok: true, user: found.user, session: found.session });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const token = getAuthTokenFromRequest(req);
+  if (token) logoutMember(token);
+  res.json({ ok: true, message: '已登出' });
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) return next();
+  const token = getAuthTokenFromRequest(req);
+  const found = findUserByToken(token);
+  if (!found) {
+    return res.status(401).json({ ok: false, code: 'AUTH_REQUIRED', message: '請先登入會員' });
+  }
+  req.authUser = found.user;
+  req.authSession = found.session;
+  next();
 });
 
 let cache539 = [];

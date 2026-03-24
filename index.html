@@ -24,6 +24,18 @@
       --danger:#ff6a6a;
       --info:#78c8ff;
     }
+
+    body.auth-pending .wrap{display:none}
+    .authOverlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;z-index:10000;background:linear-gradient(180deg, rgba(17,1,1,.94), rgba(42,2,2,.96));}
+    .authCard{width:min(440px,100%);border-radius:20px;border:1px solid rgba(247,215,123,.24);background:linear-gradient(180deg, rgba(90,16,16,.96), rgba(36,6,6,.96));box-shadow:var(--shadow);padding:22px}
+    .authCard h2{margin:0 0 8px;color:#ffe7a8}
+    .authCard p{margin:0 0 14px;color:var(--muted);font-size:13px;line-height:1.5}
+    .authCard .btns{margin-top:14px}
+    .authError{display:none;margin-top:10px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,106,106,.28);background:rgba(120,0,0,.18);color:#ffd2d2;font-size:13px}
+    .authError.show{display:block}
+    .userBadge{display:none;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;border:1px solid rgba(247,215,123,.22);background:rgba(0,0,0,.18);font-size:12px;color:#ffe7a8}
+    body.auth-ready .userBadge{display:flex}
+
     *{box-sizing:border-box}
     body{
       margin:0;
@@ -589,7 +601,7 @@
 
   </style>
 </head>
-<body>
+<body class="auth-pending">
   <div class="summaryOverlay" id="summaryOverlay" aria-hidden="true">
     <div class="summaryCard" role="dialog" aria-modal="true" aria-labelledby="summaryPrize">
       <div class="summaryTitle" id="summaryPrize">總結</div>
@@ -602,7 +614,22 @@
     </div>
   </div>
 
-  <div class="wrap">
+  <div class="authOverlay" id="authOverlay">
+  <div class="authCard">
+    <h2>會員登入</h2>
+    <p>登入成功後才可查看系統功能與資料。</p>
+    <div class="row">
+      <div><div class="small">帳號</div><input id="loginUsername" autocomplete="username" placeholder="請輸入帳號" /></div>
+      <div><div class="small">密碼</div><input id="loginPassword" type="password" autocomplete="current-password" placeholder="請輸入密碼" /></div>
+    </div>
+    <div class="small" id="loginHint" style="margin-top:10px"></div>
+    <div class="authError" id="authError"></div>
+    <div class="btns">
+      <button class="green" id="loginBtn">登入系統</button>
+    </div>
+  </div>
+</div>
+<div class="wrap" id="appShell">
     <div class="topbar">
       <div class="brand">
         <div class="logoBox">
@@ -614,6 +641,7 @@
         </div>
       </div>
       <div class="righttools">
+        <div class="userBadge" id="memberBadge"><span id="memberNameText">未登入</span><button class="secondary" id="logoutBtn" type="button">登出</button></div>
         <div class="pill">🔄 自動更新：<span id="globalAutoText">開啟</span></div>
         <div class="pill">⏱️ 更新頻率：1 分鐘</div>
         <div class="pill">💾 本機保存：<span id="saveStateText">開啟</span></div>
@@ -717,6 +745,10 @@
     },
     taskCenter: {
       queue: []
+    },
+    auth: {
+      token: localStorage.getItem('lottery_member_token') || '',
+      user: null
     }
   };
 
@@ -1671,22 +1703,107 @@ function cleanupNumbers(arr, maxNum){
     el.className = "statusTag " + (s.autoRefreshEnabled ? "ok" : "warn");
   }
 
+  function getAuthHeaders(extra = {}){
+    const headers = { ...extra };
+    if(state.auth.token) headers['x-auth-token'] = state.auth.token;
+    return headers;
+  }
+
+  function setAuthError(message=''){
+    const el = $('authError');
+    if(!el) return;
+    el.textContent = message;
+    el.classList.toggle('show', !!message);
+  }
+
+  function setAuthReady(user){
+    state.auth.user = user || null;
+    document.body.classList.remove('auth-pending');
+    document.body.classList.add('auth-ready');
+    const overlay = $('authOverlay');
+    if(overlay) overlay.style.display = 'none';
+    const nameText = $('memberNameText');
+    if(nameText && user){
+      nameText.textContent = `${user.displayName || user.username}｜${user.role === 'admin' ? '管理員' : '會員'}`;
+    }
+  }
+
+  function resetAuthState(){
+    state.auth.user = null;
+    state.auth.token = '';
+    localStorage.removeItem('lottery_member_token');
+    document.body.classList.add('auth-pending');
+    document.body.classList.remove('auth-ready');
+    const overlay = $('authOverlay');
+    if(overlay) overlay.style.display = 'flex';
+  }
+
+  async function verifyMemberToken(){
+    if(!state.auth.token) return false;
+    try{
+      const data = await fetchJson(apiPathCandidates('/api/auth/me'), { allowUnauthorized: true });
+      if(!data?.ok || !data?.user) throw new Error(data?.message || '登入驗證失敗');
+      setAuthReady(data.user);
+      return true;
+    }catch(err){
+      resetAuthState();
+      return false;
+    }
+  }
+
+  async function loginMember(){
+    const username = ($('loginUsername')?.value || '').trim();
+    const password = ($('loginPassword')?.value || '').trim();
+    if(!username || !password){
+      setAuthError('請先輸入帳號與密碼');
+      return false;
+    }
+    setAuthError('');
+    const btn = $('loginBtn');
+    const oldText = btn?.textContent || '登入系統';
+    if(btn){ btn.disabled = true; btn.textContent = '登入中...'; }
+    try{
+      const result = await postJsonApi('/api/auth/login', { username, password }, { allowUnauthorized: true });
+      if(!result?.ok || !result?.token) throw new Error(result?.message || '登入失敗');
+      state.auth.token = result.token;
+      localStorage.setItem('lottery_member_token', result.token);
+      setAuthReady(result.user || null);
+      if(result?.isDefaultAdmin){
+        localStorage.setItem('lottery_member_default_notice', '1');
+      }
+      window.location.reload();
+      return true;
+    }catch(err){
+      setAuthError(err.message || '登入失敗');
+      return false;
+    }finally{
+      if(btn){ btn.disabled = false; btn.textContent = oldText; }
+    }
+  }
+
+  async function logoutMemberClient(){
+    try{ await postJsonApi('/api/auth/logout', {}, { allowUnauthorized: true }); }catch(_){ }
+    resetAuthState();
+    window.location.reload();
+  }
+
   function apiPathCandidates(path){
     return [`${API_BASE}${path}`, `${API_FALLBACK_BASE}${path}`];
   }
 
-  async function postJsonApi(path, payload){
+  async function postJsonApi(path, payload, options = {}){
     let lastErr = null;
     for(const target of apiPathCandidates(path)){
       try{
         const res = await fetch(target, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(payload || {})
         });
         const text = await res.text();
         let json = {};
         try{ json = text ? JSON.parse(text) : {}; }catch(_){ json = { message: text || 'API 未回傳 JSON' }; }
+        if(res.status === 401 && !options.allowUnauthorized){ resetAuthState(); throw new Error(json.message || '請先登入會員'); }
         if(!res.ok) throw new Error(json.message || `HTTP ${res.status}`);
         json.__fetchedUrl = target;
         return json;
@@ -1712,14 +1829,15 @@ function cleanupNumbers(arr, maxNum){
     return String(value || '').split(/[\n,;]+/).map(v=>String(v||'').trim()).filter(Boolean);
   }
 
-  async function fetchJson(url){
+  async function fetchJson(url, options = {}){
     const urls = Array.isArray(url) ? url : [url];
     let lastErr = null;
     for(const target of urls){
       if(!target) continue;
       try{
-        const res = await fetch(target, { cache: "no-store" });
+        const res = await fetch(target, { cache: "no-store", headers: getAuthHeaders() });
         const text = await res.text();
+        if(res.status === 401 && !options.allowUnauthorized){ resetAuthState(); throw new Error('請先登入會員'); }
         if(!res.ok) throw new Error(`HTTP ${res.status}`);
         try{
           const json = JSON.parse(text);
@@ -3134,7 +3252,7 @@ function formatEta(ms){
       const normalizedGroups = { group1, group2, group3, group4, full };
       const res = await fetch(`${API_BASE}/api/manual-tracking`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           lotteryType: id === 'ttl' ? 'ttl' : '539',
           lotteryTitle: s.cfg.title,
@@ -4704,12 +4822,28 @@ function clearBroadcastForm(){
 }
 
   async function init(){
+    $('loginHint').textContent = '預設管理員帳號：admin｜預設密碼：admin12345';
+    $('loginBtn')?.addEventListener('click', loginMember);
+    $('logoutBtn')?.addEventListener('click', logoutMemberClient);
+    $('loginPassword')?.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') loginMember(); });
+    $('loginUsername')?.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') loginMember(); });
+
+    const authed = await verifyMemberToken();
+    if(!authed){
+      setTaipeiClock();
+      return;
+    }
+
     mountLotteries();
     setTaipeiClock();
     $("globalAutoText").textContent = "開啟";
     $("saveStateText").textContent = state.settings.autoSave ? "開啟" : "關閉";
 
     const restored = restoreState();
+    if(localStorage.getItem('lottery_member_default_notice') === '1'){
+      localStorage.removeItem('lottery_member_default_notice');
+      showMiniNotice('目前使用預設管理員帳號，建議後續改密碼', 'warn');
+    }
     loadTaskQueue();
     ensureTaskCenterUI();
     window.__taskRun = (taskId) => executeTaskById(taskId);

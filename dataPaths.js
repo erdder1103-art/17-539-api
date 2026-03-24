@@ -74,6 +74,10 @@ const DEFAULT_FILE_CONTENTS = {
     errorCount: 0,
     lastError: '',
     lastResponsePreview: ''
+  },
+  'members.json': {
+    users: [],
+    sessions: []
   }
 };
 
