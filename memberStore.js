@@ -81,7 +81,23 @@ function sanitizeDevice(device) {
     firstLoginAt: device.firstLoginAt || '',
     lastSeenAt: device.lastSeenAt || '',
     lastIp: device.lastIp || '',
+    locationLabel: device.locationLabel || '',
     status: device.status || 'active'
+  };
+}
+
+function sanitizeAdminLog(log) {
+  if (!log) return null;
+  return {
+    id: log.id,
+    action: log.action || '',
+    adminUsername: log.adminUsername || '',
+    targetUserId: log.targetUserId || '',
+    targetUsername: log.targetUsername || '',
+    detail: log.detail || '',
+    ip: log.ip || '',
+    locationLabel: log.locationLabel || '',
+    createdAt: log.createdAt || ''
   };
 }
 
@@ -143,7 +159,8 @@ function defaultStore() {
     }],
     sessions: [],
     accessKeys: [],
-    devices: []
+    devices: [],
+    adminLogs: []
   };
 }
 
@@ -160,6 +177,7 @@ function ensureStoreShape(store) {
   if (!Array.isArray(store.sessions)) store.sessions = [];
   if (!Array.isArray(store.accessKeys)) store.accessKeys = [];
   if (!Array.isArray(store.devices)) store.devices = [];
+  if (!Array.isArray(store.adminLogs)) store.adminLogs = [];
   if (!store.users.length) {
     const fallback = defaultStore();
     store.users = fallback.users;
@@ -217,8 +235,25 @@ function normalizeDeviceInfo(deviceInfo = {}, fallback = {}) {
     deviceId,
     deviceName: String(deviceInfo.deviceName || fallback.deviceName || '未知設備').trim().slice(0, 120),
     userAgent: String(deviceInfo.userAgent || fallback.userAgent || '').trim().slice(0, 300),
-    ip: String(deviceInfo.ip || fallback.ip || '').trim().slice(0, 80)
+    ip: String(deviceInfo.ip || fallback.ip || '').trim().slice(0, 80),
+    locationLabel: String(deviceInfo.locationLabel || fallback.locationLabel || '').trim().slice(0, 120)
   };
+}
+
+function appendAdminLog(store, action, adminUser, payload = {}) {
+  store.adminLogs = Array.isArray(store.adminLogs) ? store.adminLogs : [];
+  store.adminLogs.unshift({
+    id: randomId('log'),
+    action: String(action || '').trim(),
+    adminUsername: adminUser?.username || 'system',
+    targetUserId: payload.targetUserId || '',
+    targetUsername: payload.targetUsername || '',
+    detail: payload.detail || '',
+    ip: payload.ip || '',
+    locationLabel: payload.locationLabel || '',
+    createdAt: nowIso()
+  });
+  if (store.adminLogs.length > 500) store.adminLogs = store.adminLogs.slice(0, 500);
 }
 
 function ensureMemberDevice(store, user, deviceInfo = {}) {
@@ -240,6 +275,7 @@ function ensureMemberDevice(store, user, deviceInfo = {}) {
       firstLoginAt: currentTime,
       lastSeenAt: currentTime,
       lastIp: deviceInfo.ip || '',
+      locationLabel: deviceInfo.locationLabel || '',
       status: 'active'
     };
     store.devices.push(device);
@@ -248,6 +284,7 @@ function ensureMemberDevice(store, user, deviceInfo = {}) {
     device.userAgent = deviceInfo.userAgent || device.userAgent || '';
     device.lastSeenAt = currentTime;
     device.lastIp = deviceInfo.ip || device.lastIp || '';
+    device.locationLabel = deviceInfo.locationLabel || device.locationLabel || '';
   }
   return sanitizeDevice(device);
 }
@@ -297,6 +334,7 @@ function findUserByToken(token, deviceInfo = {}) {
       device.lastSeenAt = nowIso();
       device.lastIp = normalizedDevice.ip || device.lastIp || '';
       device.userAgent = normalizedDevice.userAgent || device.userAgent || '';
+      device.locationLabel = normalizedDevice.locationLabel || device.locationLabel || '';
       if (normalizedDevice.deviceName) device.deviceName = normalizedDevice.deviceName;
       saveStore(store);
     }
@@ -335,7 +373,7 @@ function listMembers() {
   return store.users.map(user => sanitizeUser(user, store)).sort((a, b) => String(a.username).localeCompare(String(b.username), 'zh-Hant'));
 }
 
-function createMember(payload = {}, adminUser) {
+function createMember(payload = {}, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const username = String(payload.username || '').trim();
@@ -358,11 +396,12 @@ function createMember(payload = {}, adminUser) {
     accessKeyId: String(payload.accessKeyId || '').trim()
   };
   store.users.push(member);
+  appendAdminLog(store, 'create_member', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `新增會員（方案：${member.planType}）`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return sanitizeUser(member, store);
 }
 
-function updateMember(memberId, payload = {}, adminUser) {
+function updateMember(memberId, payload = {}, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
@@ -387,17 +426,19 @@ function updateMember(memberId, payload = {}, adminUser) {
   }
   if (payload.password) member.password = makePasswordRecord(String(payload.password));
   member.updatedAt = nowIso();
+  appendAdminLog(store, 'update_member', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: '更新會員資料', ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return sanitizeUser(member, store);
 }
 
-function extendMember(memberId, payload = {}, adminUser) {
+function extendMember(memberId, payload = {}, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
   if (!member) throw new Error('找不到會員');
   Object.assign(member, buildExpiry(payload.planType || member.planType || 'month', payload.durationDays, member.expiresAt));
   member.updatedAt = nowIso();
+  appendAdminLog(store, 'extend_member', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `續期（方案：${payload.planType || member.planType || 'month'}）`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return sanitizeUser(member, store);
 }
@@ -410,7 +451,7 @@ function listMemberDevices(memberId, adminUser) {
   return getUserDevices(store, member.id);
 }
 
-function removeMemberDevice(memberId, deviceId, adminUser) {
+function removeMemberDevice(memberId, deviceId, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
@@ -419,22 +460,24 @@ function removeMemberDevice(memberId, deviceId, adminUser) {
   store.devices = store.devices.filter(d => !(d.userId === member.id && d.id === deviceId));
   store.sessions = store.sessions.filter(s => !(s.userId === member.id && s.deviceId === deviceId));
   if (before === store.devices.length) throw new Error('找不到綁定設備');
+  appendAdminLog(store, 'remove_device', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `移除設備：${deviceId}`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return getUserDevices(store, member.id);
 }
 
-function clearMemberDevices(memberId, adminUser) {
+function clearMemberDevices(memberId, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const member = store.users.find(u => u.id === memberId);
   if (!member) throw new Error('找不到會員');
   store.devices = store.devices.filter(d => d.userId !== member.id);
   store.sessions = store.sessions.filter(s => s.userId !== member.id);
+  appendAdminLog(store, 'clear_devices', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: '清空全部綁定設備', ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return [];
 }
 
-function generateAccessKeys(payload = {}, adminUser) {
+function generateAccessKeys(payload = {}, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const count = Math.max(1, Math.min(200, Number(payload.count || 1)));
@@ -457,6 +500,7 @@ function generateAccessKeys(payload = {}, adminUser) {
     store.accessKeys.unshift(item);
     created.push(sanitizeKey(item));
   }
+  appendAdminLog(store, 'generate_keys', adminUser, { detail: `生成 ${created.length} 組金鑰（${planType}/${durationDays}天）`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return created;
 }
@@ -466,7 +510,7 @@ function listAccessKeys() {
   return store.accessKeys.map(sanitizeKey);
 }
 
-function redeemAccessKey(code, targetUserId, adminUser) {
+function redeemAccessKey(code, targetUserId, adminUser, meta = {}) {
   requireAdmin(adminUser);
   const store = loadStore();
   const key = store.accessKeys.find(k => String(k.code).trim().toUpperCase() === String(code || '').trim().toUpperCase());
@@ -480,8 +524,31 @@ function redeemAccessKey(code, targetUserId, adminUser) {
   key.status = 'used';
   key.usedAt = nowIso();
   key.usedBy = member.username;
+  appendAdminLog(store, 'redeem_key', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `套用金鑰：${key.code}`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
   saveStore(store);
   return { member: sanitizeUser(member, store), key: sanitizeKey(key) };
+}
+
+
+function renameMemberDevice(memberId, deviceId, deviceName, adminUser, meta = {}) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  const member = store.users.find(u => u.id === memberId);
+  if (!member) throw new Error('找不到會員');
+  const device = store.devices.find(d => d.userId === member.id && d.id === deviceId && d.status !== 'removed');
+  if (!device) throw new Error('找不到綁定設備');
+  const cleanName = String(deviceName || '').trim().slice(0, 120);
+  if (!cleanName) throw new Error('請輸入設備名稱');
+  device.deviceName = cleanName;
+  appendAdminLog(store, 'rename_device', adminUser, { targetUserId: member.id, targetUsername: member.username, detail: `設備改名：${cleanName}`, ip: meta.ip || '', locationLabel: meta.locationLabel || '' });
+  saveStore(store);
+  return getUserDevices(store, member.id);
+}
+
+function listAdminLogs(adminUser) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  return (store.adminLogs || []).map(sanitizeAdminLog);
 }
 
 module.exports = {
@@ -496,7 +563,9 @@ module.exports = {
   listMemberDevices,
   removeMemberDevice,
   clearMemberDevices,
+  renameMemberDevice,
   generateAccessKeys,
   listAccessKeys,
-  redeemAccessKey
+  redeemAccessKey,
+  listAdminLogs
 };

@@ -26,9 +26,11 @@ const {
   listMemberDevices,
   removeMemberDevice,
   clearMemberDevices,
+  renameMemberDevice,
   generateAccessKeys,
   listAccessKeys,
-  redeemAccessKey
+  redeemAccessKey,
+  listAdminLogs
 } = require('./memberStore');
 
 const app = express();
@@ -68,15 +70,38 @@ function getAuthTokenFromRequest(req) {
 
 function getClientIp(req) {
   const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return forwarded || req.socket?.remoteAddress || '';
+  const realIp = String(req.headers['x-real-ip'] || '').trim();
+  const cfIp = String(req.headers['cf-connecting-ip'] || '').trim();
+  return forwarded || realIp || cfIp || req.socket?.remoteAddress || '';
+}
+
+function buildLocationLabel(req, ip) {
+  const country = String(req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || req.headers['x-country-code'] || '').trim();
+  const region = String(req.headers['x-vercel-ip-country-region'] || req.headers['x-region'] || '').trim();
+  const city = String(req.headers['x-vercel-ip-city'] || req.headers['x-city'] || '').trim();
+  const parts = [country, region, city].filter(Boolean);
+  if (parts.length) return parts.join(' / ');
+  if (!ip) return '未知來源';
+  if (ip === '::1' || ip === '127.0.0.1' || ip.includes('localhost')) return '本機 localhost';
+  if (/^(::ffff:)?10\.|^(::ffff:)?192\.168\.|^(::ffff:)?172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return '內網 / 區域網路';
+  if (ip.startsWith('::ffff:')) return 'IPv4 映射位址';
+  if (ip.includes(':')) return 'IPv6 網路';
+  return '外部網路';
+}
+
+function getRequestMeta(req) {
+  const ip = getClientIp(req);
+  return { ip, locationLabel: buildLocationLabel(req, ip) };
 }
 
 function getDeviceInfoFromRequest(req) {
+  const meta = getRequestMeta(req);
   return {
     deviceId: String(req.headers['x-device-id'] || req.body?.deviceId || '').trim(),
     deviceName: String(req.headers['x-device-name'] || req.body?.deviceName || '').trim(),
     userAgent: String(req.headers['user-agent'] || '').trim(),
-    ip: getClientIp(req)
+    ip: meta.ip,
+    locationLabel: meta.locationLabel
   };
 }
 
@@ -136,7 +161,7 @@ app.get('/api/admin/members', (req, res) => {
 app.post('/api/admin/members', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    const member = createMember(req.body || {}, req.authUser);
+    const member = createMember(req.body || {}, req.authUser, getRequestMeta(req));
     res.json({ ok: true, member });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '建立會員失敗' });
@@ -146,7 +171,7 @@ app.post('/api/admin/members', (req, res) => {
 app.post('/api/admin/members/:id/update', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    const member = updateMember(req.params.id, req.body || {}, req.authUser);
+    const member = updateMember(req.params.id, req.body || {}, req.authUser, getRequestMeta(req));
     res.json({ ok: true, member });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '更新會員失敗' });
@@ -156,7 +181,7 @@ app.post('/api/admin/members/:id/update', (req, res) => {
 app.post('/api/admin/members/:id/extend', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    const member = extendMember(req.params.id, req.body || {}, req.authUser);
+    const member = extendMember(req.params.id, req.body || {}, req.authUser, getRequestMeta(req));
     res.json({ ok: true, member });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '續期失敗' });
@@ -176,7 +201,7 @@ app.get('/api/admin/members/:id/devices', (req, res) => {
 app.post('/api/admin/members/:id/devices/remove', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    res.json({ ok: true, devices: removeMemberDevice(req.params.id, req.body?.deviceId, req.authUser) });
+    res.json({ ok: true, devices: removeMemberDevice(req.params.id, req.body?.deviceId, req.authUser, getRequestMeta(req)) });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '移除設備失敗' });
   }
@@ -185,9 +210,28 @@ app.post('/api/admin/members/:id/devices/remove', (req, res) => {
 app.post('/api/admin/members/:id/devices/clear', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    res.json({ ok: true, devices: clearMemberDevices(req.params.id, req.authUser) });
+    res.json({ ok: true, devices: clearMemberDevices(req.params.id, req.authUser, getRequestMeta(req)) });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '清空設備失敗' });
+  }
+});
+
+
+app.post('/api/admin/members/:id/devices/rename', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, devices: renameMemberDevice(req.params.id, req.body?.deviceId, req.body?.deviceName, req.authUser, getRequestMeta(req)) });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '設備改名失敗' });
+  }
+});
+
+app.get('/api/admin/logs', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, logs: listAdminLogs(req.authUser) });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '讀取操作日誌失敗' });
   }
 });
 
@@ -203,7 +247,7 @@ app.get('/api/admin/access-keys', (req, res) => {
 app.post('/api/admin/access-keys/generate', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    const keys = generateAccessKeys(req.body || {}, req.authUser);
+    const keys = generateAccessKeys(req.body || {}, req.authUser, getRequestMeta(req));
     res.json({ ok: true, keys });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '生成金鑰失敗' });
@@ -213,7 +257,7 @@ app.post('/api/admin/access-keys/generate', (req, res) => {
 app.post('/api/admin/access-keys/redeem', (req, res) => {
   try {
     if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
-    const result = redeemAccessKey(req.body?.code, req.body?.targetUserId, req.authUser);
+    const result = redeemAccessKey(req.body?.code, req.body?.targetUserId, req.authUser, getRequestMeta(req));
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '套用金鑰失敗' });

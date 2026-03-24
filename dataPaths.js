@@ -77,7 +77,10 @@ const DEFAULT_FILE_CONTENTS = {
   },
   'members.json': {
     users: [],
-    sessions: []
+    sessions: [],
+    accessKeys: [],
+    devices: [],
+    adminLogs: []
   }
 };
 
