@@ -435,8 +435,8 @@ function classifyAvoidanceRiskGroup(nums, analysis){
   const list = Array.isArray(nums) ? nums.map(v=>String(v).padStart(2,'0')) : [];
   const hot = new Set((analysis?.hotNumbers || analysis?.hot || []).map(v=>String(v).padStart(2,'0')));
   const warm = new Set((analysis?.warmNumbers || analysis?.warm || []).map(v=>String(v).padStart(2,'0')));
-  const highRiskPairs = new Set((analysis?.highRiskPairs || []).map(String));
-  const highRiskTriples = new Set((analysis?.highRiskTriples || []).map(String));
+  const highRiskPairs = new Set(Array.from(analysis?.highRiskPairs || []).map(String));
+  const highRiskTriples = new Set(Array.from(analysis?.highRiskTriples || []).map(String));
   const pairHits = getCombinations(list,2).map(comboKey).filter(key=>highRiskPairs.has(key));
   const tripleHits = getCombinations(list,3).map(comboKey).filter(key=>highRiskTriples.has(key));
   const pairRiskNums = new Set(pairHits.flatMap(k=>String(k).split('-').map(v=>String(v).padStart(2,'0'))));
@@ -3046,6 +3046,14 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     $(`${id}_prize4Desc`).value.trim() || '第四組',
     $(`${id}_prize5Desc`).value.trim() || '全車號碼'
   ];
+  const allNums = Array.from({length:maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
+  const lockedByIndex = {
+    1: Array.isArray(stateLocks[1]) ? stateLocks[1].slice() : null,
+    2: Array.isArray(stateLocks[2]) ? stateLocks[2].slice() : null,
+    3: Array.isArray(stateLocks[3]) ? stateLocks[3].slice() : null,
+    4: Array.isArray(stateLocks[4]) ? stateLocks[4].slice() : null
+  };
+  const candidateCount = 220;
   let qualified = null;
   let fallback = null;
 
