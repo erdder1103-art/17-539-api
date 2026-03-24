@@ -54,28 +54,34 @@
     .authError.show{display:block}
     .userBadge{display:none;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;border:1px solid rgba(247,215,123,.22);background:rgba(0,0,0,.18);font-size:12px;color:#ffe7a8}
     body.auth-ready .userBadge{display:flex}
-    .moduleNav{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 10px}.moduleBtn{padding:12px 16px;border-radius:16px;border:1px solid rgba(247,215,123,.22);background:rgba(32,0,0,.44);color:var(--text);cursor:pointer;font-weight:700;min-width:110px}.moduleBtn.active{background:linear-gradient(180deg,#baf57f,#8edc56);color:#1b2400}.accountPanel{margin:10px 0 16px;padding:16px;border:1px solid rgba(247,215,123,.18);border-radius:18px;background:rgba(42,3,3,.58);display:none}.accountPanel.show{display:block}.accountGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.accountCell{padding:12px;border-radius:14px;background:rgba(0,0,0,.18);border:1px solid rgba(247,215,123,.12)}.lotteryShell.hiddenByModule{display:none}
+    .moduleNav{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 10px}.moduleBtn{padding:12px 16px;border-radius:16px;border:1px solid rgba(247,215,123,.22);background:rgba(32,0,0,.44);color:var(--text);cursor:pointer;font-weight:700;min-width:110px}.moduleBtn.active{background:linear-gradient(180deg,#baf57f,#8edc56);color:#1b2400}.accountPanel{margin:10px 0 16px;padding:16px;border:1px solid rgba(247,215,123,.18);border-radius:18px;background:rgba(42,3,3,.58);display:none}.accountPanel.show{display:block}.accountGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.accountCell{padding:12px;border-radius:14px;background:rgba(0,0,0,.18);border:1px solid rgba(247,215,123,.12)}.lotteryWrap.hiddenByModule{display:none !important}
 
     @media (max-width: 768px){
       body{padding:10px}
-      .topbar{padding:12px;align-items:stretch}
-      .brand{width:100%;min-width:0;align-items:flex-start}
+      .topbar{padding:12px;align-items:stretch;flex-direction:column}
+      .brand{width:100%;min-width:0;align-items:center}
       .logoBox{width:72px;height:72px}
       .brand > div:last-child{min-width:0;flex:1}
       .brand h1{font-size:18px;line-height:1.2}
       .brand p{font-size:11px;line-height:1.45;margin-top:6px}
       .righttools{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch}
-      .userBadge,.pill{width:100%;min-width:0;border-radius:18px;justify-content:space-between;align-items:center;padding:10px 12px;font-size:12px;line-height:1.35}
-      .userBadge button{flex:0 0 auto}
+      .userBadge{grid-column:1 / -1;display:flex !important;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;width:100%;min-width:0;border-radius:18px;padding:12px}
+      .userBadge span{display:block;flex:1 1 auto;min-width:0;white-space:normal;word-break:break-word;line-height:1.5}
+      .userBadge button{flex:0 0 auto;min-width:72px}
+      .pill{width:100%;min-width:0;border-radius:18px;justify-content:space-between;align-items:center;padding:10px 12px;font-size:12px;line-height:1.45;white-space:normal}
       .moduleNav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
       .moduleBtn{min-width:0;width:100%;padding:14px 10px;font-size:15px}
       .accountGrid{grid-template-columns:1fr}
     }
     @media (max-width: 480px){
-      .righttools{grid-template-columns:1fr}
-      .moduleNav{grid-template-columns:1fr 1fr 1fr}
-      .brand{gap:10px}
+      .brand{align-items:flex-start;gap:10px}
       .logoBox{width:64px;height:64px}
+      .brand h1{font-size:17px}
+      .brand p{font-size:10px}
+      .righttools{grid-template-columns:1fr}
+      .userBadge{grid-column:auto}
+      .moduleNav{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .pill,.userBadge{font-size:11px}
     }
 
     *{box-sizing:border-box}
@@ -113,7 +119,7 @@
     }
     .logoBox img{width:100%;height:100%;object-fit:contain;display:block;background:transparent;}
     .brand h1{font-size:20px;margin:0;letter-spacing:.5px}
-    .brand p{margin:2px 0 0; font-size:12px; color:var(--muted)}
+    .brand p{margin:2px 0 0; font-size:12px; color:var(--muted);line-height:1.5;word-break:break-word}
     .righttools{
       display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end;
     }
@@ -864,7 +870,7 @@
   function applyModuleView(){
     const module = state.ui.activeModule || 'l539';
     document.querySelectorAll('.moduleBtn').forEach(btn=>btn.classList.toggle('active', btn.dataset.module===module));
-    document.querySelectorAll('.lotteryShell').forEach(el=>el.classList.toggle('hiddenByModule', el.dataset.lottery !== module));
+    document.querySelectorAll('.lotteryWrap').forEach(el=>el.classList.toggle('hiddenByModule', el.dataset.lottery !== module));
     const panel = $('accountPanel');
     if(panel) panel.classList.toggle('show', module === 'account');
   }
@@ -1459,7 +1465,7 @@ function cleanupNumbers(arr, maxNum){
   function lotteryTemplate(cfg){
     const id = cfg.id;
     return `
-      <div class="lotteryWrap" id="${id}_wrap">
+      <div class="lotteryWrap" data-lottery="${id}" id="${id}_wrap">
         <div class="card">
           <div class="hd">
             <div class="title"><span class="dot"></span>${cfg.title}｜搖獎號碼</div>

@@ -661,7 +661,7 @@ function cleanupNumbers(arr, maxNum){
   function lotteryTemplate(cfg){
     const id = cfg.id;
     return `
-      <div class="lotteryWrap" id="${id}_wrap">
+      <div class="lotteryWrap" data-lottery="${id}" id="${id}_wrap">
         <div class="card">
           <div class="hd">
             <div class="title"><span class="dot"></span>${cfg.title}｜搖獎號碼</div>
