@@ -6,6 +6,15 @@ const DEFAULT_ADMIN_USERNAME = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin12345';
 const SESSION_TTL_MS = Number(process.env.AUTH_SESSION_TTL_MS || 1000 * 60 * 60 * 24 * 7);
 
+const PLAN_DAYS = {
+  key: 30,
+  month: 30,
+  quarter: 90,
+  year: 365,
+  custom: 0,
+  permanent: 36500
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -30,49 +39,40 @@ function verifyPassword(password, record = {}) {
   return expected.length === actualBuf.length && crypto.timingSafeEqual(expected, actualBuf);
 }
 
-function defaultStore() {
-  const adminPassword = makePasswordRecord(DEFAULT_ADMIN_PASSWORD);
-  return {
-    users: [
-      {
-        id: 'u_admin',
-        username: DEFAULT_ADMIN_USERNAME,
-        role: 'admin',
-        displayName: '管理員',
-        password: adminPassword,
-        status: 'active',
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-        note: '首次部署預設帳號，請登入後盡快修改。'
-      }
-    ],
-    sessions: []
-  };
+function addDays(baseDate, days) {
+  const dt = new Date(baseDate || Date.now());
+  dt.setDate(dt.getDate() + Number(days || 0));
+  return dt.toISOString();
 }
 
-function loadStore() {
-  const fallback = defaultStore();
-  const store = readJsonSafe(FILE, fallback);
-  if (!Array.isArray(store.users) || !store.users.length) {
-    writeJsonAtomic(FILE, fallback);
-    return fallback;
-  }
-  if (!Array.isArray(store.sessions)) store.sessions = [];
-  cleanupExpiredSessions(store);
-  return store;
+function randomId(prefix) {
+  return `${prefix}_${crypto.randomBytes(6).toString('hex')}`;
 }
 
-function saveStore(store) {
-  cleanupExpiredSessions(store);
-  writeJsonAtomic(FILE, store);
+function makeAccessKeyString(prefix = 'SVN') {
+  const raw = crypto.randomBytes(12).toString('hex').toUpperCase();
+  return `${prefix}-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
 }
 
-function cleanupExpiredSessions(store) {
-  const now = Date.now();
-  store.sessions = (Array.isArray(store.sessions) ? store.sessions : []).filter(s => {
-    if (!s || !s.expiresAt || !s.tokenHash) return false;
-    return new Date(s.expiresAt).getTime() > now;
-  });
+function normalizePlan(planType, durationDays) {
+  const type = String(planType || 'month').toLowerCase();
+  const fallback = PLAN_DAYS[type] ?? PLAN_DAYS.month;
+  const days = type === 'custom' ? Math.max(1, Number(durationDays || 0)) : fallback;
+  return { planType: type, durationDays: days };
+}
+
+function buildExpiry(planType, durationDays, currentExpiresAt) {
+  const { planType: normalizedPlan, durationDays: days } = normalizePlan(planType, durationDays);
+  const anchor = currentExpiresAt && new Date(currentExpiresAt).getTime() > Date.now()
+    ? currentExpiresAt
+    : nowIso();
+  const expiresAt = normalizedPlan === 'permanent' ? '2999-12-31T23:59:59.000Z' : addDays(anchor, days);
+  return { planType: normalizedPlan, durationDays: days, expiresAt };
+}
+
+function isExpired(user) {
+  if (!user?.expiresAt) return false;
+  return new Date(user.expiresAt).getTime() <= Date.now();
 }
 
 function sanitizeUser(user) {
@@ -84,29 +84,132 @@ function sanitizeUser(user) {
     displayName: user.displayName || user.username,
     status: user.status || 'active',
     createdAt: user.createdAt || '',
-    updatedAt: user.updatedAt || ''
+    updatedAt: user.updatedAt || '',
+    expiresAt: user.expiresAt || '',
+    planType: user.planType || 'month',
+    durationDays: Number(user.durationDays || 0),
+    note: user.note || '',
+    lastLoginAt: user.lastLoginAt || '',
+    isExpired: isExpired(user),
+    accessKeyId: user.accessKeyId || ''
   };
+}
+
+function sanitizeKey(key) {
+  if (!key) return null;
+  return {
+    id: key.id,
+    code: key.code,
+    planType: key.planType,
+    durationDays: key.durationDays,
+    status: key.status,
+    createdAt: key.createdAt,
+    usedAt: key.usedAt || '',
+    usedBy: key.usedBy || '',
+    note: key.note || ''
+  };
+}
+
+function defaultStore() {
+  const adminPassword = makePasswordRecord(DEFAULT_ADMIN_PASSWORD);
+  const adminExpiry = buildExpiry('permanent', 0);
+  return {
+    users: [
+      {
+        id: 'u_admin',
+        username: DEFAULT_ADMIN_USERNAME,
+        role: 'admin',
+        displayName: '系統管理員',
+        password: adminPassword,
+        status: 'active',
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+        note: '首次部署預設帳號，請登入後盡快修改。',
+        ...adminExpiry
+      }
+    ],
+    sessions: [],
+    accessKeys: []
+  };
+}
+
+function cleanupExpiredSessions(store) {
+  const now = Date.now();
+  store.sessions = (Array.isArray(store.sessions) ? store.sessions : []).filter(s => {
+    if (!s || !s.expiresAt || !s.tokenHash) return false;
+    return new Date(s.expiresAt).getTime() > now;
+  });
+}
+
+function ensureStoreShape(store) {
+  if (!Array.isArray(store.users)) store.users = [];
+  if (!Array.isArray(store.sessions)) store.sessions = [];
+  if (!Array.isArray(store.accessKeys)) store.accessKeys = [];
+  if (!store.users.length) {
+    const fallback = defaultStore();
+    store.users = fallback.users;
+  }
+  store.users = store.users.map((user, idx) => {
+    const next = { ...user };
+    if (!next.id) next.id = idx === 0 ? 'u_admin' : randomId('u');
+    if (!next.role) next.role = idx === 0 ? 'admin' : 'member';
+    if (!next.displayName) next.displayName = next.username || `會員${idx + 1}`;
+    if (!next.createdAt) next.createdAt = nowIso();
+    if (!next.updatedAt) next.updatedAt = next.createdAt;
+    if (!next.planType || next.durationDays === undefined || !next.expiresAt) {
+      Object.assign(next, buildExpiry(next.role === 'admin' ? 'permanent' : 'month', next.role === 'admin' ? 0 : 30));
+    }
+    return next;
+  });
+  cleanupExpiredSessions(store);
+  return store;
+}
+
+function loadStore() {
+  const fallback = defaultStore();
+  const store = ensureStoreShape(readJsonSafe(FILE, fallback));
+  writeJsonAtomic(FILE, store);
+  return store;
+}
+
+function saveStore(store) {
+  ensureStoreShape(store);
+  writeJsonAtomic(FILE, store);
+}
+
+function getUserByUsername(store, username) {
+  const normalized = String(username || '').trim().toLowerCase();
+  return store.users.find(u => String(u.username || '').trim().toLowerCase() === normalized) || null;
+}
+
+function touchUserLogin(store, userId) {
+  const user = store.users.find(u => u.id === userId);
+  if (user) {
+    user.lastLoginAt = nowIso();
+    user.updatedAt = nowIso();
+  }
 }
 
 function loginMember(username, password) {
   const store = loadStore();
-  const normalized = String(username || '').trim().toLowerCase();
-  const user = store.users.find(u => String(u.username || '').toLowerCase() === normalized);
+  const user = getUserByUsername(store, username);
   if (!user || user.status === 'disabled') throw new Error('帳號或密碼錯誤');
+  if (isExpired(user)) throw new Error('會員使用期限已到，請聯絡管理員續期');
   if (!verifyPassword(password, user.password)) throw new Error('帳號或密碼錯誤');
   const token = crypto.randomBytes(32).toString('hex');
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
   store.sessions.push({
-    tokenHash,
+    tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
     userId: user.id,
     createdAt: nowIso(),
-    expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString()
+    expiresAt
   });
+  touchUserLogin(store, user.id);
   saveStore(store);
   return {
     token,
     user: sanitizeUser(user),
-    expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    expiresAt,
     isDefaultAdmin: String(user.username) === DEFAULT_ADMIN_USERNAME
   };
 }
@@ -118,14 +221,8 @@ function findUserByToken(token) {
   const session = store.sessions.find(s => s.tokenHash === tokenHash);
   if (!session) return null;
   const user = store.users.find(u => u.id === session.userId && u.status !== 'disabled');
-  if (!user) return null;
-  return {
-    user: sanitizeUser(user),
-    session: {
-      createdAt: session.createdAt,
-      expiresAt: session.expiresAt
-    }
-  };
+  if (!user || isExpired(user)) return null;
+  return { user: sanitizeUser(user), session: { createdAt: session.createdAt, expiresAt: session.expiresAt } };
 }
 
 function logoutMember(token) {
@@ -134,23 +231,156 @@ function logoutMember(token) {
   const tokenHash = crypto.createHash('sha256').update(String(token)).digest('hex');
   const before = store.sessions.length;
   store.sessions = store.sessions.filter(s => s.tokenHash !== tokenHash);
-  if (store.sessions.length !== before) saveStore(store);
+  saveStore(store);
   return store.sessions.length !== before;
 }
 
 function getMemberBootstrapInfo() {
   const store = loadStore();
-  const admin = store.users.find(u => u.username === DEFAULT_ADMIN_USERNAME) || store.users[0];
+  const admin = getUserByUsername(store, DEFAULT_ADMIN_USERNAME) || store.users[0];
   return {
     initialized: true,
     defaultUsername: admin?.username || DEFAULT_ADMIN_USERNAME,
-    hasUsers: Array.isArray(store.users) && store.users.length > 0
+    hasUsers: store.users.length > 0,
+    title: '拾柒專屬追蹤系統'
   };
+}
+
+function requireAdmin(user) {
+  if (!user || user.role !== 'admin') throw new Error('需要管理員權限');
+}
+
+function listMembers() {
+  const store = loadStore();
+  return store.users.map(sanitizeUser).sort((a, b) => String(a.username).localeCompare(String(b.username), 'zh-Hant'));
+}
+
+function createMember(payload = {}, adminUser) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  const username = String(payload.username || '').trim();
+  const password = String(payload.password || '').trim();
+  if (!username || !password) throw new Error('請輸入會員帳號與密碼');
+  if (getUserByUsername(store, username)) throw new Error('此會員帳號已存在');
+  const expiry = buildExpiry(payload.planType, payload.durationDays);
+  const member = {
+    id: randomId('u'),
+    username,
+    displayName: String(payload.displayName || username).trim(),
+    role: payload.role === 'admin' ? 'admin' : 'member',
+    password: makePasswordRecord(password),
+    status: payload.status === 'disabled' ? 'disabled' : 'active',
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    note: String(payload.note || '').trim(),
+    ...expiry,
+    accessKeyId: String(payload.accessKeyId || '').trim()
+  };
+  store.users.push(member);
+  saveStore(store);
+  return sanitizeUser(member);
+}
+
+function updateMember(memberId, payload = {}, adminUser) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  const member = store.users.find(u => u.id === memberId);
+  if (!member) throw new Error('找不到會員');
+  if (payload.displayName !== undefined) member.displayName = String(payload.displayName || '').trim() || member.username;
+  if (payload.note !== undefined) member.note = String(payload.note || '').trim();
+  if (payload.role !== undefined && member.username !== DEFAULT_ADMIN_USERNAME) member.role = payload.role === 'admin' ? 'admin' : 'member';
+  if (payload.status !== undefined) {
+    member.status = payload.status === 'disabled' ? 'disabled' : 'active';
+    if (member.status === 'disabled') {
+      store.sessions = store.sessions.filter(s => s.userId !== member.id);
+    }
+  }
+  if (payload.planType || payload.durationDays || payload.expiresAt) {
+    if (payload.expiresAt) {
+      member.expiresAt = new Date(payload.expiresAt).toISOString();
+      member.planType = String(payload.planType || member.planType || 'custom');
+      member.durationDays = Number(payload.durationDays || member.durationDays || 0);
+    } else {
+      Object.assign(member, buildExpiry(payload.planType, payload.durationDays));
+    }
+  }
+  if (payload.password) member.password = makePasswordRecord(String(payload.password));
+  member.updatedAt = nowIso();
+  saveStore(store);
+  return sanitizeUser(member);
+}
+
+function extendMember(memberId, payload = {}, adminUser) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  const member = store.users.find(u => u.id === memberId);
+  if (!member) throw new Error('找不到會員');
+  Object.assign(member, buildExpiry(payload.planType || member.planType || 'month', payload.durationDays, member.expiresAt));
+  member.updatedAt = nowIso();
+  saveStore(store);
+  return sanitizeUser(member);
+}
+
+function generateAccessKeys(payload = {}, adminUser) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  const count = Math.max(1, Math.min(200, Number(payload.count || 1)));
+  const { planType, durationDays } = normalizePlan(payload.planType, payload.durationDays);
+  const prefix = String(payload.prefix || 'SVN').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'SVN';
+  const created = [];
+  for (let i = 0; i < count; i++) {
+    const item = {
+      id: randomId('k'),
+      code: makeAccessKeyString(prefix),
+      planType,
+      durationDays,
+      status: 'unused',
+      note: String(payload.note || '').trim(),
+      createdAt: nowIso(),
+      createdBy: adminUser?.username || 'system',
+      usedAt: '',
+      usedBy: ''
+    };
+    store.accessKeys.unshift(item);
+    created.push(sanitizeKey(item));
+  }
+  saveStore(store);
+  return created;
+}
+
+function listAccessKeys() {
+  const store = loadStore();
+  return store.accessKeys.map(sanitizeKey);
+}
+
+function redeemAccessKey(code, targetUserId, adminUser) {
+  requireAdmin(adminUser);
+  const store = loadStore();
+  const key = store.accessKeys.find(k => String(k.code).trim().toUpperCase() === String(code || '').trim().toUpperCase());
+  if (!key) throw new Error('找不到金鑰');
+  if (key.status !== 'unused') throw new Error('此金鑰已被使用或停用');
+  const member = store.users.find(u => u.id === targetUserId);
+  if (!member) throw new Error('找不到會員');
+  Object.assign(member, buildExpiry(key.planType, key.durationDays, member.expiresAt));
+  member.accessKeyId = key.id;
+  member.updatedAt = nowIso();
+  key.status = 'used';
+  key.usedAt = nowIso();
+  key.usedBy = member.username;
+  saveStore(store);
+  return { member: sanitizeUser(member), key: sanitizeKey(key) };
 }
 
 module.exports = {
   loginMember,
   findUserByToken,
   logoutMember,
-  getMemberBootstrapInfo
+  getMemberBootstrapInfo,
+  listMembers,
+  createMember,
+  updateMember,
+  extendMember,
+  generateAccessKeys,
+  listAccessKeys,
+  redeemAccessKey
 };

@@ -14,7 +14,19 @@ const { getBotRuntimeSummary, testTelegramSend, callTelegram, broadcastTelegramM
 const { startBotInteraction, getBotInteractionState } = require('./botInteraction');
 const { readBotConfig, writeBotConfig } = require('./botConfigStore');
 const { ACTIVE_DATA_DIR, DEFAULT_VOLUME_DIR, LOCAL_DATA_DIR, initializeDataFiles, getStorageDebug, getDataFile, readJsonSafe, writeJsonAtomic } = require('./dataPaths');
-const { loginMember, findUserByToken, logoutMember, getMemberBootstrapInfo } = require('./memberStore');
+const {
+  loginMember,
+  findUserByToken,
+  logoutMember,
+  getMemberBootstrapInfo,
+  listMembers,
+  createMember,
+  updateMember,
+  extendMember,
+  generateAccessKeys,
+  listAccessKeys,
+  redeemAccessKey
+} = require('./memberStore');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,7 +36,7 @@ app.use(express.json({ limit: '35mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token, Authorization');
   if (req.path.startsWith('/api/')) {
     res.header('Cache-Control', 'no-store');
   }
@@ -91,6 +103,75 @@ app.use('/api', (req, res, next) => {
   req.authUser = found.user;
   req.authSession = found.session;
   next();
+});
+
+
+app.get('/api/admin/members', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, members: listMembers() });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '讀取會員失敗' });
+  }
+});
+
+app.post('/api/admin/members', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    const member = createMember(req.body || {}, req.authUser);
+    res.json({ ok: true, member });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '建立會員失敗' });
+  }
+});
+
+app.post('/api/admin/members/:id/update', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    const member = updateMember(req.params.id, req.body || {}, req.authUser);
+    res.json({ ok: true, member });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '更新會員失敗' });
+  }
+});
+
+app.post('/api/admin/members/:id/extend', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    const member = extendMember(req.params.id, req.body || {}, req.authUser);
+    res.json({ ok: true, member });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '續期失敗' });
+  }
+});
+
+app.get('/api/admin/access-keys', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, keys: listAccessKeys() });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '讀取金鑰失敗' });
+  }
+});
+
+app.post('/api/admin/access-keys/generate', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    const keys = generateAccessKeys(req.body || {}, req.authUser);
+    res.json({ ok: true, keys });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '生成金鑰失敗' });
+  }
+});
+
+app.post('/api/admin/access-keys/redeem', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    const result = redeemAccessKey(req.body?.code, req.body?.targetUserId, req.authUser);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '套用金鑰失敗' });
+  }
 });
 
 let cache539 = [];
