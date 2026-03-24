@@ -639,10 +639,9 @@
       <img alt="拾柒專屬追蹤系統LOGO" src="assets/logo/logo.png" onerror="this.style.display='none'">
       <div class="authBrandText">
         <h2>拾柒專屬追蹤系統</h2>
-        <div class="sub">會員登入後才可查看完整功能與資料</div>
+        
       </div>
     </div>
-    <p>支援會員時效控管、金鑰、月 / 季 / 年方案管理。</p>
     <div class="row">
       <div><div class="small">帳號</div><input id="loginUsername" autocomplete="username" placeholder="請輸入帳號" /></div>
       <div><div class="small">密碼</div><input id="loginPassword" type="password" autocomplete="current-password" placeholder="請輸入密碼" /></div>
@@ -5030,7 +5029,7 @@ function clearBroadcastForm(){
 }
 
   async function init(){
-    $('loginHint').textContent = '預設管理員帳號：admin｜預設密碼：admin12345';
+    $('loginHint').textContent = ''; 
     $('loginBtn')?.addEventListener('click', loginMember);
     $('loginPassword')?.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') loginMember(); });
     $('loginUsername')?.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') loginMember(); });
@@ -5057,7 +5056,6 @@ function clearBroadcastForm(){
     const restored = restoreState();
     if(localStorage.getItem('lottery_member_default_notice') === '1'){
       localStorage.removeItem('lottery_member_default_notice');
-      showMiniNotice('目前使用預設管理員帳號，建議後續改密碼', 'warn');
     }
     loadTaskQueue();
     ensureTaskCenterUI();
