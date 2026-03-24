@@ -798,6 +798,8 @@
     return `近${getAnalysisWindow()}期`;
   }
 
+  const APP_MODE = 'member';
+
   const state = {
     lotteries: {},
     settings: {
@@ -1768,8 +1770,23 @@ function cleanupNumbers(arr, maxNum){
     el.className = "statusTag " + (s.autoRefreshEnabled ? "ok" : "warn");
   }
 
+  function getDeviceId(){
+    let id = localStorage.getItem('lottery_device_id') || '';
+    if(!id){
+      id = `dev_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+      localStorage.setItem('lottery_device_id', id);
+    }
+    return id;
+  }
+
+  function getDeviceName(){
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    return `${platform || 'Unknown'} / ${ua.slice(0, 60)}`.slice(0, 110);
+  }
+
   function getAuthHeaders(extra = {}){
-    const headers = { ...extra };
+    const headers = { ...extra, 'x-device-id': getDeviceId(), 'x-device-name': getDeviceName() };
     if(state.auth.token) headers['x-auth-token'] = state.auth.token;
     return headers;
   }
@@ -1793,8 +1810,7 @@ function cleanupNumbers(arr, maxNum){
       nameText.textContent = `${user.displayName || user.username}｜${user.role === 'admin' ? '管理員' : '會員'}${expiredText}`;
     }
     const adminPanel = $('adminPanel');
-    if(adminPanel) adminPanel.classList.toggle('show', user?.role === 'admin');
-    if(user?.role === 'admin') loadAdminDashboard().catch(err=>showMiniNotice(err.message || '載入會員後台失敗','warn'));
+    if(adminPanel) adminPanel.classList.remove('show');
   }
 
   function resetAuthState(){
@@ -1852,6 +1868,9 @@ function cleanupNumbers(arr, maxNum){
     try{
       const data = await fetchJson(apiPathCandidates('/api/auth/me'), { allowUnauthorized: true });
       if(!data?.ok || !data?.user) throw new Error(data?.message || '登入驗證失敗');
+      if(data.user?.role === 'admin'){
+        throw new Error('管理員請改由獨立後台登入');
+      }
       setAuthReady(data.user);
       await bootstrapAfterAuth();
       return true;
@@ -1873,8 +1892,12 @@ function cleanupNumbers(arr, maxNum){
     const oldText = btn?.textContent || '登入系統';
     if(btn){ btn.disabled = true; btn.textContent = '登入中...'; }
     try{
-      const result = await postJsonApi('/api/auth/login', { username, password }, { allowUnauthorized: true });
+      const result = await postJsonApi('/api/auth/login', { username, password, deviceId: getDeviceId(), deviceName: getDeviceName() }, { allowUnauthorized: true });
       if(!result?.ok || !result?.token) throw new Error(result?.message || '登入失敗');
+      if(result?.user?.role === 'admin'){
+        setAuthError('管理員請改由獨立後台登入');
+        return false;
+      }
       state.auth.token = result.token;
       localStorage.setItem('lottery_member_token', result.token);
       setAuthReady(result.user || null);

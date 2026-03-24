@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>拾柒專屬追蹤系統｜管理後台</title>
+  <style>
+    :root{--bg1:#2a0000;--bg2:#5a0000;--panel:#650909cc;--line:#b86b22;--text:#ffe7bf;--muted:#d6b184;--green:#9ce66f;--red:#ff8b8b}
+    *{box-sizing:border-box} body{margin:0;font-family:Arial,"Noto Sans TC",sans-serif;background:radial-gradient(circle at top,var(--bg2),var(--bg1) 58%);color:var(--text)}
+    .wrap{max-width:1440px;margin:0 auto;padding:18px}
+    .card{background:linear-gradient(180deg,rgba(120,10,10,.74),rgba(40,5,5,.88));border:1px solid rgba(240,170,80,.45);border-radius:22px;box-shadow:0 12px 28px rgba(0,0,0,.25)}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px}
+    .brand{display:flex;align-items:center;gap:14px}.logo{width:74px;height:74px;display:flex;align-items:center;justify-content:center;background:transparent}.logo img{max-width:100%;max-height:100%;object-fit:contain;display:block;background:transparent}
+    .title{font-size:38px;font-weight:800;letter-spacing:1px}.sub{font-size:13px;color:var(--muted);margin-top:4px}
+    .badgeRow{display:flex;gap:10px;flex-wrap:wrap}.badge{padding:10px 14px;border-radius:999px;border:1px solid rgba(240,170,80,.45);background:rgba(30,0,0,.32);font-size:13px}
+    .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-top:16px}.panel{padding:16px}
+    h2,h3{margin:0 0 12px} h2{font-size:20px} h3{font-size:17px;color:#ffe7a8}
+    .row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.row4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px} input,select,button{font:inherit} input,select{width:100%;padding:11px 12px;border-radius:14px;border:1px solid rgba(240,170,80,.38);background:rgba(30,0,0,.45);color:var(--text)}
+    button{padding:11px 14px;border-radius:14px;border:1px solid rgba(240,170,80,.45);background:rgba(45,0,0,.55);color:var(--text);cursor:pointer} button.green{background:linear-gradient(180deg,#baf57f,#8edc56);color:#1b2400;font-weight:700} button.warn{background:linear-gradient(180deg,#ffb39f,#ff8e6f);color:#3d0c00;font-weight:700}
+    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.tableWrap{max-height:520px;overflow:auto;border:1px solid rgba(240,170,80,.25);border-radius:16px}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px 12px;border-bottom:1px solid rgba(240,170,80,.12);font-size:13px;text-align:left;vertical-align:top}.table th{position:sticky;top:0;background:#521010}
+    .small{font-size:12px;color:var(--muted)} .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace} .ok{color:#baf57f} .danger{color:#ffb3b3}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:16px}.modal.show{display:flex}.modalCard{width:min(820px,100%);padding:18px}
+    #loginView{max-width:560px;margin:70px auto 0;padding:22px} #adminView{display:none} #adminView.show{display:block}
+    @media (max-width:1100px){.grid{grid-template-columns:1fr}.row4,.row3,.row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div id="loginView" class="card">
+    <div class="brand">
+      <div class="logo"><img src="assets/logo/logo.png" alt="LOGO"></div>
+      <div>
+        <div class="title" style="font-size:30px">管理後台登入</div>
+        <div class="sub">拾柒專屬追蹤系統</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <div><label>管理員帳號</label><input id="loginUsername" autocomplete="username"></div>
+      <div><label>密碼</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+    </div>
+    <div class="btns"><button class="green" id="loginBtn">登入後台</button></div>
+    <div id="loginMsg" class="small" style="margin-top:10px"></div>
+  </div>
+
+  <div id="adminView">
+    <div class="card top">
+      <div class="brand">
+        <div class="logo"><img src="assets/logo/logo.png" alt="LOGO"></div>
+        <div>
+          <div style="font-size:28px;font-weight:800">拾柒專屬追蹤系統｜獨立後台站</div>
+          <div class="sub">會員、方案、設備綁定、金鑰管理</div>
+        </div>
+      </div>
+      <div class="badgeRow">
+        <div class="badge" id="adminBadge">未登入</div>
+        <button id="logoutBtn">登出</button>
+        <a href="/" style="text-decoration:none"><button type="button">前往會員站</button></a>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card panel">
+        <h2>會員管理</h2>
+        <div class="row4">
+          <div><label>會員帳號</label><input id="memberUsername"></div>
+          <div><label>顯示名稱</label><input id="memberDisplay"></div>
+          <div><label>密碼</label><input id="memberPassword" type="password"></div>
+          <div><label>方案</label><select id="memberPlan"><option value="month">月</option><option value="quarter">季</option><option value="year">年</option><option value="custom">自訂天數</option><option value="permanent">永久</option></select></div>
+        </div>
+        <div class="row3" style="margin-top:10px">
+          <div><label>自訂天數</label><input id="memberDays" type="number" value="30" min="1"></div>
+          <div><label>備註</label><input id="memberNote"></div>
+          <div><label>&nbsp;</label><button class="green" id="createMemberBtn">新增會員</button></div>
+        </div>
+        <div class="btns"><button id="reloadMembersBtn">重新整理會員</button></div>
+        <div class="tableWrap" style="margin-top:12px">
+          <table class="table"><thead><tr><th>會員</th><th>方案 / 到期</th><th>設備</th><th>狀態</th><th>操作</th></tr></thead><tbody id="membersTbody"></tbody></table>
+        </div>
+      </div>
+
+      <div class="card panel">
+        <h2>金鑰管理</h2>
+        <div class="row4">
+          <div><label>方案</label><select id="keyPlan"><option value="month">月</option><option value="quarter">季</option><option value="year">年</option><option value="custom">自訂天數</option></select></div>
+          <div><label>數量</label><input id="keyCount" type="number" value="5" min="1" max="100"></div>
+          <div><label>自訂天數</label><input id="keyDays" type="number" value="30" min="1"></div>
+          <div><label>前綴</label><input id="keyPrefix" value="SVN"></div>
+        </div>
+        <div class="btns"><button class="green" id="generateKeysBtn">生成金鑰</button><button id="reloadKeysBtn">重新整理金鑰</button></div>
+        <div class="row" style="margin-top:12px">
+          <div><label>金鑰</label><input id="redeemCode"></div>
+          <div><label>會員 ID</label><input id="redeemUserId"></div>
+        </div>
+        <div class="btns"><button id="redeemBtn">套用到會員</button></div>
+        <div class="tableWrap" style="margin-top:12px">
+          <table class="table"><thead><tr><th>金鑰</th><th>方案</th><th>狀態</th><th>使用者</th></tr></thead><tbody id="keysTbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="deviceModal">
+  <div class="card modalCard">
+    <div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h3>會員設備管理</h3><button id="closeDeviceModal">關閉</button></div>
+    <div id="deviceMemberInfo" class="small" style="margin-bottom:10px"></div>
+    <div class="btns"><button class="warn" id="clearDevicesBtn">清空此會員全部設備</button></div>
+    <div class="tableWrap" style="margin-top:12px"><table class="table"><thead><tr><th>設備</th><th>首次登入</th><th>最後使用</th><th>IP</th><th>操作</th></tr></thead><tbody id="devicesTbody"></tbody></table></div>
+  </div>
+</div>
+
+<script>
+const state={token:localStorage.getItem('lottery_admin_token')||'',user:null,members:[],deviceMember:null};
+const $=id=>document.getElementById(id);
+function msg(t,ok=false){const el=$('loginMsg');if(el){el.textContent=t||'';el.style.color=ok?'#baf57f':'#ffb3b3';}}
+function getDeviceId(){let id=localStorage.getItem('lottery_admin_device_id')||'';if(!id){id=`adm_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;localStorage.setItem('lottery_admin_device_id',id)}return id}
+function headers(extra={}){const h={...extra,'x-device-id':getDeviceId(),'x-device-name':'admin-console'};if(state.token)h['x-auth-token']=state.token;return h}
+async function api(path,options={}){const res=await fetch(path,{cache:'no-store',...options,headers:headers(options.headers||{})});const data=await res.json().catch(()=>({ok:false,message:'伺服器回應異常'}));if(!res.ok||data?.ok===false)throw new Error(data?.message||'請求失敗');return data}
+function planDays(plan,days){if(plan==='quarter')return 90;if(plan==='year')return 365;if(plan==='custom')return Math.max(1,Number(days||0));if(plan==='permanent')return 36500;return 30}
+function fmt(v){return v?String(v).replace('T',' ').slice(0,16):'—'}
+function escapeHtml(s){return String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
+function showAdmin(){ $('loginView').style.display='none'; $('adminView').classList.add('show'); $('adminBadge').textContent=`${state.user.displayName||state.user.username}｜管理員`; }
+function showLogin(){ $('loginView').style.display='block'; $('adminView').classList.remove('show'); }
+async function verify(){ if(!state.token) return showLogin(); try{ const data=await api('/api/auth/me'); if(data.user?.role!=='admin') throw new Error('此帳號不是管理員'); state.user=data.user; showAdmin(); await Promise.all([loadMembers(),loadKeys()]); }catch(err){ localStorage.removeItem('lottery_admin_token'); state.token=''; showLogin(); msg(err.message||'請重新登入'); }}
+async function login(){ const username=$('loginUsername').value.trim(); const password=$('loginPassword').value.trim(); if(!username||!password) return msg('請輸入帳號與密碼'); try{ const data=await api('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password,deviceId:getDeviceId(),deviceName:'admin-console'})}); if(data.user?.role!=='admin') throw new Error('請使用管理員帳號登入後台'); state.token=data.token; localStorage.setItem('lottery_admin_token',data.token); state.user=data.user; msg(''); showAdmin(); await Promise.all([loadMembers(),loadKeys()]); }catch(err){msg(err.message||'登入失敗')}}
+async function logout(){ try{await api('/api/auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})}catch(_){ } localStorage.removeItem('lottery_admin_token'); state.token=''; state.user=null; showLogin(); }
+async function loadMembers(){ const data=await api('/api/admin/members'); state.members=Array.isArray(data.members)?data.members:[]; $('membersTbody').innerHTML=state.members.map(m=>`<tr><td><div><b>${escapeHtml(m.displayName||m.username)}</b></div><div class="small mono">${escapeHtml(m.username)}<br>ID:${escapeHtml(m.id)}</div></td><td><div>${escapeHtml(m.planType||'month')}</div><div class="small">到期：${escapeHtml(fmt(m.expiresAt))}</div></td><td><div><b>${m.deviceCount||0} / ${m.deviceLimit||3}</b></div><div class="small">最多綁定 ${m.deviceLimit||3} 台</div></td><td><div class="${m.status==='disabled'||m.isExpired?'danger':'ok'}">${m.status==='disabled'?'停用':(m.isExpired?'已到期':'正常')}</div></td><td><div class="btns"><button onclick="openDevices('${m.id}')">設備</button><button onclick="extendMember('${m.id}')">續期</button><button onclick="toggleMember('${m.id}','${m.status==='disabled'?'active':'disabled'}')">${m.status==='disabled'?'啟用':'停用'}</button><button onclick="changePassword('${m.id}')">改密碼</button></div></td></tr>`).join('')||'<tr><td colspan="5" class="small">目前沒有會員</td></tr>' }
+async function loadKeys(){ const data=await api('/api/admin/access-keys'); const keys=Array.isArray(data.keys)?data.keys:[]; $('keysTbody').innerHTML=keys.map(k=>`<tr><td class="mono">${escapeHtml(k.code)}</td><td>${escapeHtml(k.planType)} / ${Number(k.durationDays||0)}天</td><td>${escapeHtml(k.status)}</td><td>${escapeHtml(k.usedBy||'—')}</td></tr>`).join('')||'<tr><td colspan="4" class="small">沒有金鑰</td></tr>' }
+async function createMember(){ const payload={username:$('memberUsername').value.trim(),displayName:$('memberDisplay').value.trim(),password:$('memberPassword').value.trim(),planType:$('memberPlan').value,durationDays:planDays($('memberPlan').value,$('memberDays').value),note:$('memberNote').value.trim()}; await api('/api/admin/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); ['memberUsername','memberDisplay','memberPassword','memberNote'].forEach(id=>$(id).value=''); await loadMembers(); }
+async function generateKeys(){ const payload={planType:$('keyPlan').value,count:Number($('keyCount').value||1),durationDays:planDays($('keyPlan').value,$('keyDays').value),prefix:$('keyPrefix').value.trim()||'SVN'}; await api('/api/admin/access-keys/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); await loadKeys(); }
+async function redeem(){ await api('/api/admin/access-keys/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('redeemCode').value.trim(),targetUserId:$('redeemUserId').value.trim()})}); await Promise.all([loadMembers(),loadKeys()]); }
+async function extendMember(id){ const plan=prompt('輸入續期方案：month / quarter / year / custom / permanent','month'); if(!plan) return; const days=plan==='custom'?Number(prompt('自訂天數','30')||'30'):planDays(plan,30); await api(`/api/admin/members/${id}/extend`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({planType:plan,durationDays:days})}); await loadMembers(); }
+async function toggleMember(id,status){ await api(`/api/admin/members/${id}/update`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})}); await loadMembers(); }
+async function changePassword(id){ const password=prompt('請輸入新密碼'); if(!password) return; await api(`/api/admin/members/${id}/update`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})}); alert('已更新密碼'); }
+async function openDevices(id){ const member=state.members.find(m=>m.id===id); state.deviceMember=member; $('deviceMemberInfo').textContent=`${member?.displayName||member?.username||''}｜目前 ${member?.deviceCount||0} / ${member?.deviceLimit||3} 台`; const data=await api(`/api/admin/members/${id}/devices`); $('devicesTbody').innerHTML=(data.devices||[]).map(d=>`<tr><td><div><b>${escapeHtml(d.deviceName||d.id)}</b></div><div class="small mono">${escapeHtml(d.id)}<br>${escapeHtml((d.userAgent||'').slice(0,90))}</div></td><td>${escapeHtml(fmt(d.firstLoginAt))}</td><td>${escapeHtml(fmt(d.lastSeenAt))}</td><td class="mono">${escapeHtml(d.lastIp||'—')}</td><td><button class="warn" onclick="removeDevice('${id}','${d.id}')">移除</button></td></tr>`).join('')||'<tr><td colspan="5" class="small">沒有綁定設備</td></tr>'; $('deviceModal').classList.add('show'); }
+async function removeDevice(memberId,deviceId){ await api(`/api/admin/members/${memberId}/devices/remove`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId})}); await openDevices(memberId); await loadMembers(); }
+async function clearDevices(){ if(!state.deviceMember) return; if(!confirm('確定清空此會員全部設備？')) return; await api(`/api/admin/members/${state.deviceMember.id}/devices/clear`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); $('deviceModal').classList.remove('show'); await loadMembers(); }
+document.addEventListener('DOMContentLoaded',()=>{ $('loginBtn').addEventListener('click',login); $('loginPassword').addEventListener('keydown',e=>{if(e.key==='Enter')login()}); $('logoutBtn').addEventListener('click',logout); $('createMemberBtn').addEventListener('click',()=>createMember().catch(err=>alert(err.message))); $('reloadMembersBtn').addEventListener('click',()=>loadMembers().catch(err=>alert(err.message))); $('generateKeysBtn').addEventListener('click',()=>generateKeys().catch(err=>alert(err.message))); $('reloadKeysBtn').addEventListener('click',()=>loadKeys().catch(err=>alert(err.message))); $('redeemBtn').addEventListener('click',()=>redeem().catch(err=>alert(err.message))); $('closeDeviceModal').addEventListener('click',()=>$('deviceModal').classList.remove('show')); $('clearDevicesBtn').addEventListener('click',()=>clearDevices().catch(err=>alert(err.message))); verify(); });
+window.openDevices=openDevices; window.extendMember=extendMember; window.toggleMember=toggleMember; window.changePassword=changePassword; window.removeDevice=removeDevice;
+</script>
+</body>
+</html>

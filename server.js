@@ -23,6 +23,9 @@ const {
   createMember,
   updateMember,
   extendMember,
+  listMemberDevices,
+  removeMemberDevice,
+  clearMemberDevices,
   generateAccessKeys,
   listAccessKeys,
   redeemAccessKey
@@ -36,7 +39,7 @@ app.use(express.json({ limit: '35mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Auth-Token, Authorization, X-Device-Id, X-Device-Name');
   if (req.path.startsWith('/api/')) {
     res.header('Cache-Control', 'no-store');
   }
@@ -45,14 +48,14 @@ app.use((req, res, next) => {
 });
 
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
-app.get('/', (req, res) => {
+function sendNoCacheFile(res, fileName) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
-app.get('/index.html', (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
+  res.sendFile(path.join(__dirname, fileName));
+}
+app.get('/', (req, res) => sendNoCacheFile(res, 'index.html'));
+app.get('/index.html', (req, res) => sendNoCacheFile(res, 'index.html'));
+app.get('/admin', (req, res) => sendNoCacheFile(res, 'admin.html'));
+app.get('/admin.html', (req, res) => sendNoCacheFile(res, 'admin.html'));
 
 function getAuthTokenFromRequest(req) {
   const headerToken = String(req.headers['x-auth-token'] || '').trim();
@@ -60,6 +63,21 @@ function getAuthTokenFromRequest(req) {
   const authHeader = String(req.headers.authorization || '').trim();
   const bearer = authHeader.match(/^Bearer\s+(.+)$/i);
   return bearer ? bearer[1].trim() : '';
+}
+
+
+function getClientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || req.socket?.remoteAddress || '';
+}
+
+function getDeviceInfoFromRequest(req) {
+  return {
+    deviceId: String(req.headers['x-device-id'] || req.body?.deviceId || '').trim(),
+    deviceName: String(req.headers['x-device-name'] || req.body?.deviceName || '').trim(),
+    userAgent: String(req.headers['user-agent'] || '').trim(),
+    ip: getClientIp(req)
+  };
 }
 
 app.get('/api/auth/bootstrap', (req, res) => {
@@ -73,7 +91,7 @@ app.post('/api/auth/login', (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ ok: false, message: '請輸入帳號與密碼' });
     }
-    const result = loginMember(username, password);
+    const result = loginMember(username, password, getDeviceInfoFromRequest(req));
     return res.json({ ok: true, token: result.token, user: result.user, expiresAt: result.expiresAt, isDefaultAdmin: result.isDefaultAdmin });
   } catch (err) {
     return res.status(401).json({ ok: false, message: err.message || '登入失敗' });
@@ -82,7 +100,7 @@ app.post('/api/auth/login', (req, res) => {
 
 app.get('/api/auth/me', (req, res) => {
   const token = getAuthTokenFromRequest(req);
-  const found = findUserByToken(token);
+  const found = findUserByToken(token, getDeviceInfoFromRequest(req));
   if (!found) return res.status(401).json({ ok: false, message: '登入已失效，請重新登入' });
   res.json({ ok: true, user: found.user, session: found.session });
 });
@@ -96,7 +114,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/')) return next();
   const token = getAuthTokenFromRequest(req);
-  const found = findUserByToken(token);
+  const found = findUserByToken(token, getDeviceInfoFromRequest(req));
   if (!found) {
     return res.status(401).json({ ok: false, code: 'AUTH_REQUIRED', message: '請先登入會員' });
   }
@@ -142,6 +160,34 @@ app.post('/api/admin/members/:id/extend', (req, res) => {
     res.json({ ok: true, member });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message || '續期失敗' });
+  }
+});
+
+
+app.get('/api/admin/members/:id/devices', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, devices: listMemberDevices(req.params.id, req.authUser) });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '讀取設備失敗' });
+  }
+});
+
+app.post('/api/admin/members/:id/devices/remove', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, devices: removeMemberDevice(req.params.id, req.body?.deviceId, req.authUser) });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '移除設備失敗' });
+  }
+});
+
+app.post('/api/admin/members/:id/devices/clear', (req, res) => {
+  try {
+    if (req.authUser?.role !== 'admin') return res.status(403).json({ ok: false, message: '需要管理員權限' });
+    res.json({ ok: true, devices: clearMemberDevices(req.params.id, req.authUser) });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message || '清空設備失敗' });
   }
 });
 
