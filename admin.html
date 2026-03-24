@@ -116,6 +116,8 @@
 </div>
 
 <script>
+const API_BASE = 'https://17-539-api-production-9873.up.railway.app';
+const API_FALLBACK_BASE = window.location.origin;
 const state={token:localStorage.getItem('lottery_admin_token')||'',user:null,members:[],deviceMember:null};
 const $=id=>document.getElementById(id);
 function msg(t,ok=false){const el=$('loginMsg');if(el){el.textContent=t||'';el.style.color=ok?'#baf57f':'#ffb3b3';}}
@@ -125,7 +127,8 @@ function planDays(plan,days){if(plan==='quarter')return 90;if(plan==='year')retu
 function fmt(v){return v?String(v).replace('T',' ').slice(0,16):'—'}
 function escapeHtml(s){return String(s||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
 function ipLabel(ip=''){const v=String(ip||'').trim();if(!v)return '未知來源';if(v==='::1'||v==='127.0.0.1'||v.startsWith('127.'))return '本機 localhost';if(v.startsWith('192.168.')||v.startsWith('10.')||/^172\.(1[6-9]|2\d|3[0-1])\./.test(v))return '內網 / 區域網路';if(v.includes(':'))return 'IPv6 網路';return '外部網路'}
-async function api(path,options={}){const res=await fetch(path,{cache:'no-store',...options,headers:headers(options.headers||{})});const raw=await res.text();let data=null;try{data=raw?JSON.parse(raw):{}}catch(_){data={ok:false,message:raw && raw.startsWith('<!doctype')?'伺服器回傳了網頁內容，請確認 /api 路由是否正常':'伺服器回應異常'}}if(!res.ok||data?.ok===false)throw new Error(data?.message||`請求失敗(${res.status})`);return data}
+function apiTargets(path){ return [`${API_BASE}${path}`, `${API_FALLBACK_BASE}${path}`]; }
+async function api(path,options={}){ let lastErr=null; for(const target of apiTargets(path)){ try{ const res=await fetch(target,{cache:'no-store',...options,headers:headers(options.headers||{})}); const raw=await res.text(); let data=null; try{ data=raw?JSON.parse(raw):{} }catch(_){ data={ok:false,message:raw && /<(!doctype|html)/i.test(raw)?`伺服器回傳了網頁內容，請確認 API 部署是否正常：${target}`:'伺服器回應異常'} } if(!res.ok||data?.ok===false) throw new Error(data?.message||`請求失敗(${res.status})`); return data; }catch(err){ lastErr=err; }} throw lastErr||new Error('API 連線失敗'); }
 function showAdmin(){ $('loginView').style.display='none'; $('adminView').classList.add('show'); $('adminBadge').textContent=`${state.user.displayName||state.user.username}｜管理員`; }
 function showLogin(){ $('loginView').style.display='block'; $('adminView').classList.remove('show'); }
 async function loadIpInfo(){ try{ const d=await api('/api/admin/ip-info'); $('ipInfoText').textContent=`登入來源：${d.label||ipLabel(d.ip)}｜IP：${d.ip||'—'}`; }catch(_){ $('ipInfoText').textContent='登入來源：—'; } }
