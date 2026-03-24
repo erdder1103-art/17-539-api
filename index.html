@@ -83,11 +83,12 @@
     }
     .logoBox{
       width:86px;height:86px;border-radius:14px;
-      background:radial-gradient(circle at 30% 30%, #ffe7a8 0%, #f7d77b 30%, #a56a12 100%);
-      box-shadow: inset 0 0 0 2px rgba(0,0,0,.25), 0 10px 22px rgba(0,0,0,.35);
-      overflow:hidden; flex:0 0 auto;
+      background:transparent;
+      box-shadow:none;
+      overflow:visible; flex:0 0 auto;
+      display:flex;align-items:center;justify-content:center;
     }
-    .logoBox img{width:100%;height:100%;object-fit:cover;display:block;}
+    .logoBox img{width:100%;height:100%;object-fit:contain;display:block;background:transparent;}
     .brand h1{font-size:20px;margin:0;letter-spacing:.5px}
     .brand p{margin:2px 0 0; font-size:12px; color:var(--muted)}
     .righttools{
@@ -1808,12 +1809,51 @@ function cleanupNumbers(arr, maxNum){
     if(adminPanel) adminPanel.classList.remove('show');
   }
 
+
+  let appBootstrapped = false;
+  async function bootstrapAfterAuth(){
+    if(appBootstrapped) return;
+    appBootstrapped = true;
+    mountLotteries();
+    setTaipeiClock();
+    $("globalAutoText").textContent = "開啟";
+    $("saveStateText").textContent = state.settings.autoSave ? "開啟" : "關閉";
+
+    const restored = restoreState();
+    if(localStorage.getItem('lottery_member_default_notice') === '1'){
+      localStorage.removeItem('lottery_member_default_notice');
+    }
+    loadTaskQueue();
+    ensureTaskCenterUI();
+    window.__taskRun = (taskId) => executeTaskById(taskId);
+    window.__taskRemove = (taskId) => removeTaskById(taskId);
+    window.__taskClone = (taskId) => rerunTaskById(taskId);
+    ['broadcastModeAll','broadcastModeCustom'].forEach(id=>$(id)?.addEventListener('click', ()=>setBroadcastMode($(id).dataset.mode)));
+    $('broadcastClose')?.addEventListener('click', closeBroadcastCenter);
+    $('broadcastPreviewBtn')?.addEventListener('click', renderBroadcastPreview);
+    $('broadcastSendBtn')?.addEventListener('click', sendManualBroadcast);
+    $('broadcastClearBtn')?.addEventListener('click', clearBroadcastForm);
+    $('broadcastText')?.addEventListener('input', renderBroadcastPreview);
+    $('broadcastChatIds')?.addEventListener('input', renderBroadcastPreview);
+    $('broadcastFile')?.addEventListener('change', onBroadcastFileChange);
+
+    await initLottery("ttl", restored);
+    await initLottery("l539", restored);
+
+    if(restored){
+      showMiniNotice("已恢復上次本機保存資料", "ok");
+    }else{
+      showMiniNotice("系統已初始化完成", "ok");
+    }
+  }
+
   async function verifyMemberToken(){
     if(!state.auth.token) return false;
     try{
       const data = await fetchJson(apiPathCandidates('/api/auth/me'), { allowUnauthorized: true });
       if(!data?.ok || !data?.user) throw new Error(data?.message || '登入驗證失敗');
       setAuthReady(data.user);
+      await bootstrapAfterAuth();
       return true;
     }catch(err){
       resetAuthState();
@@ -1838,6 +1878,7 @@ function cleanupNumbers(arr, maxNum){
       state.auth.token = result.token;
       localStorage.setItem('lottery_member_token', result.token);
       setAuthReady(result.user || null);
+      await bootstrapAfterAuth();
       setAuthError('');
       if(result?.isDefaultAdmin){
         showMiniNotice('已使用預設管理員帳號登入，建議儘快建立專屬會員並修改密碼', 'warn');
@@ -5041,43 +5082,10 @@ function clearBroadcastForm(){
     $('adminRedeemKeyBtn')?.addEventListener('click', ()=>redeemKeyFromAdmin().catch(err=>showMiniNotice(err.message || '套用金鑰失敗','warn')));
     $('loginPassword')?.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') loginMember(); });
     $('loginUsername')?.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') loginMember(); });
-
     const authed = await verifyMemberToken();
     if(!authed){
       setTaipeiClock();
       return;
-    }
-
-    mountLotteries();
-    setTaipeiClock();
-    $("globalAutoText").textContent = "開啟";
-    $("saveStateText").textContent = state.settings.autoSave ? "開啟" : "關閉";
-
-    const restored = restoreState();
-    if(localStorage.getItem('lottery_member_default_notice') === '1'){
-      localStorage.removeItem('lottery_member_default_notice');
-    }
-    loadTaskQueue();
-    ensureTaskCenterUI();
-    window.__taskRun = (taskId) => executeTaskById(taskId);
-    window.__taskRemove = (taskId) => removeTaskById(taskId);
-    window.__taskClone = (taskId) => rerunTaskById(taskId);
-    ['broadcastModeAll','broadcastModeCustom'].forEach(id=>$(id)?.addEventListener('click', ()=>setBroadcastMode($(id).dataset.mode)));
-    $('broadcastClose')?.addEventListener('click', closeBroadcastCenter);
-    $('broadcastPreviewBtn')?.addEventListener('click', renderBroadcastPreview);
-    $('broadcastSendBtn')?.addEventListener('click', sendManualBroadcast);
-    $('broadcastClearBtn')?.addEventListener('click', clearBroadcastForm);
-    $('broadcastText')?.addEventListener('input', renderBroadcastPreview);
-    $('broadcastChatIds')?.addEventListener('input', renderBroadcastPreview);
-    $('broadcastFile')?.addEventListener('change', onBroadcastFileChange);
-
-    await initLottery("ttl", restored);
-    await initLottery("l539", restored);
-
-    if(restored){
-      showMiniNotice("已恢復上次本機保存資料", "ok");
-    }else{
-      showMiniNotice("系統已初始化完成", "ok");
     }
   }
 
