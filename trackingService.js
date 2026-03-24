@@ -200,8 +200,7 @@ function buildCreatedMessage(record) {
     `通報時間：${record.confirmedAt}`,
     ...(record.startFromIssue ? [`生效期數：${record.startFromIssue}`] : []),
     '',
-    ...linesForGroups(record),
-    ...(linesForAnalysis(record).length ? ['', ...linesForAnalysis(record)] : [])
+    ...linesForGroups(record)
   ];
   return lines.join('\n');
 }

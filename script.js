@@ -2402,7 +2402,6 @@ function formatEta(ms){
       };
       const blocks = [];
       if(active.length) blocks.push(`<div class="small" style="margin:6px 0 8px;color:#cbd5e1;">待開獎追蹤（${active.length}）</div>${active.map((row)=>renderTrackingRow(row,'active')).join('')}`);
-      if(cancelled.length) blocks.push(`<div class="small" style="margin:12px 0 8px;color:#94a3b8;">已取消／已被取代（${cancelled.length}）</div>${cancelled.slice(0,20).map((row)=>renderTrackingRow(row,'cancelled')).join('')}`);
       box.innerHTML = blocks.length ? blocks.join('') : '<span class="muted">目前沒有追蹤紀錄</span>';
       Array.from(box.querySelectorAll('.btnCheckNowTracking')).forEach((btn)=>{
         btn.addEventListener('click', ()=>checkTrackingNow(id, btn.dataset.id || ''));
