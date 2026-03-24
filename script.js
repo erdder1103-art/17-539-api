@@ -409,6 +409,31 @@ function getGroupNamesForLottery(id){
   ];
 }
 
+function getCanonicalGeneratedGroups(bestResult, id){
+  const names = getGroupNamesForLottery(id);
+  const rawGroups = bestResult?.groups || {};
+  const canonical = bestResult?.canonicalGroups || {};
+  const byLabel = (index)=> Array.isArray(rawGroups[names[index]]) ? rawGroups[names[index]] : [];
+  const group1 = Array.isArray(canonical.group1) && canonical.group1.length ? canonical.group1 : byLabel(0);
+  const group2 = Array.isArray(canonical.group2) && canonical.group2.length ? canonical.group2 : byLabel(1);
+  const group3 = Array.isArray(canonical.group3) && canonical.group3.length ? canonical.group3 : byLabel(2);
+  const group4 = Array.isArray(canonical.group4) && canonical.group4.length ? canonical.group4 : byLabel(3);
+  const full = Array.isArray(canonical.full) && canonical.full.length ? canonical.full : (Array.isArray(rawGroups.full) ? rawGroups.full : (Array.isArray(rawGroups[names[4]]) ? rawGroups[names[4]] : []));
+  return {
+    group1: cleanupNumbers(group1, state.lotteries[id].cfg.maxNum),
+    group2: cleanupNumbers(group2, state.lotteries[id].cfg.maxNum),
+    group3: cleanupNumbers(group3, state.lotteries[id].cfg.maxNum),
+    group4: cleanupNumbers(group4, state.lotteries[id].cfg.maxNum),
+    full: cleanupNumbers(full, state.lotteries[id].cfg.maxNum)
+  };
+}
+
+function attachCanonicalGeneratedGroups(bestResult, id){
+  if(!bestResult) return bestResult;
+  bestResult.canonicalGroups = getCanonicalGeneratedGroups(bestResult, id);
+  return bestResult;
+}
+
 function getLockedGroupCount(id){
   return Object.keys(getLockedGroupMap(id) || {}).filter(k => Array.isArray(getLockedGroupMap(id)[k]) && getLockedGroupMap(id)[k].length === 5).length;
 }
@@ -421,12 +446,19 @@ function rebuildFullFromLocked(id){
   for(let i=1;i<=4;i++){ (locks[i] || []).forEach(n => used.add(n)); }
   const allNums = Array.from({length:s.cfg.maxNum}, (_,i)=> String(i+1).padStart(2,'0'));
   const full = allNums.filter(n => !used.has(n)).slice(0, 19);
-  if(!s.generatedGroups) s.generatedGroups = { groups: {} };
+  if(!s.generatedGroups) s.generatedGroups = { groups: {}, canonicalGroups: {} };
   if(!s.generatedGroups.groups) s.generatedGroups.groups = {};
-  for(let i=1;i<=4;i++){ if(Array.isArray(locks[i]) && locks[i].length===5) s.generatedGroups.groups[names[i-1]] = locks[i].slice(); }
+  if(!s.generatedGroups.canonicalGroups) s.generatedGroups.canonicalGroups = {};
+  for(let i=1;i<=4;i++){
+    if(Array.isArray(locks[i]) && locks[i].length===5){
+      s.generatedGroups.groups[names[i-1]] = locks[i].slice();
+      s.generatedGroups.canonicalGroups[`group${i}`] = locks[i].slice();
+    }
+  }
   s.generatedGroups.groups[names[4]] = full;
-  fillManualFieldsFromPlan(id, s.generatedGroups.groups);
-  renderGroupPreview(id, s.generatedGroups);
+  s.generatedGroups.canonicalGroups.full = full.slice();
+  fillManualFieldsFromPlan(id, s.generatedGroups);
+  renderGroupPreview(id, attachCanonicalGeneratedGroups(s.generatedGroups, id));
   return full;
 }
 
@@ -470,7 +502,8 @@ function applySearchOverlayResult(id, bestResult){
   els.pill.textContent = bestResult.canNotify ? '可用候選' : '候選完成';
   for(let i=0;i<5;i++) {
     const cardEl = $(`searchCard_${i}`); const numsEl = $(`searchNums_${i}`); const hintEl = $(`searchHint_${i}`); const badgeEl = $(`searchBadge_${i}`); const lockBtn = $(`searchLockBtn_${i}`);
-    const nums = (bestResult.groups && bestResult.groups[names[i]]) ? bestResult.groups[names[i]] : [];
+    const canonicalGroups = getCanonicalGeneratedGroups(bestResult, id);
+    const nums = i < 4 ? (canonicalGroups[`group${i+1}`] || []) : (canonicalGroups.full || []);
     const detail = details[i] || null;
     const isLocked = i < 4 && Array.isArray(locks[i+1]) && locks[i+1].length === 5;
     if(cardEl){ cardEl.classList.remove('active'); cardEl.classList.toggle('locked', isLocked); }
@@ -489,7 +522,8 @@ function applySearchOverlayResult(id, bestResult){
     }
     if(lockBtn){ lockBtn.style.display = 'none'; lockBtn.disabled = true; }
   }
-  const mainReady = [0,1,2,3].every(idx => { const nums = (bestResult.groups && bestResult.groups[names[idx]]) ? bestResult.groups[names[idx]] : []; return Array.isArray(nums) && nums.length === 5; });
+  const canonicalGroupsReady = getCanonicalGeneratedGroups(bestResult, id);
+  const mainReady = [1,2,3,4].every(idx => Array.isArray(canonicalGroupsReady[`group${idx}`]) && canonicalGroupsReady[`group${idx}`].length === 5);
   if(mainReady){
     rebuildFullFromLocked(id);
     els.pill.textContent = bestResult.canNotify ? '可直接通報' : (bestResult.packStatus || '可觀察');
@@ -520,16 +554,19 @@ function lockCandidateGroupFromOverlay(id, groupIndex){
     showMiniNotice(`${s.cfg.title}：已解除第${groupIndex}組鎖定`, 'info');
     return;
   }
-  const nums = result?.groups?.[names[groupIndex-1]] || [];
+  const canonicalGroups = getCanonicalGeneratedGroups(result, id);
+  const nums = canonicalGroups[`group${groupIndex}`] || [];
   if(!Array.isArray(nums) || nums.length !== 5){
     showMiniNotice(`${s.cfg.title}：這組沒有有效 5 顆號碼，無法鎖定`, 'warn');
     return;
   }
   if(!s.smartLocks) s.smartLocks = {};
   s.smartLocks[groupIndex] = nums.slice();
-  if(!s.generatedGroups) s.generatedGroups = result || { groups: {} };
+  if(!s.generatedGroups) s.generatedGroups = result || { groups: {}, canonicalGroups: {} };
   if(!s.generatedGroups.groups) s.generatedGroups.groups = {};
+  if(!s.generatedGroups.canonicalGroups) s.generatedGroups.canonicalGroups = {};
   s.generatedGroups.groups[names[groupIndex-1]] = nums.slice();
+  s.generatedGroups.canonicalGroups[`group${groupIndex}`] = nums.slice();
   persistAll();
   applySearchOverlayResult(id, result);
   showMiniNotice(`${s.cfg.title}：已鎖定第${groupIndex}組`, 'ok');
@@ -2186,13 +2223,7 @@ function formatEta(ms){
     ];
 
     const groups = s.generatedGroups.groups || {};
-    const normalizedGroups = {
-      group1: cleanupNumbers(groups[order[0]] || [], s.cfg.maxNum),
-      group2: cleanupNumbers(groups[order[1]] || [], s.cfg.maxNum),
-      group3: cleanupNumbers(groups[order[2]] || [], s.cfg.maxNum),
-      group4: cleanupNumbers(groups[order[3]] || [], s.cfg.maxNum),
-      full: cleanupNumbers(groups[order[4]] || [], s.cfg.maxNum)
-    };
+    const normalizedGroups = getCanonicalGeneratedGroups(s.generatedGroups, id);
     const previewSnapshot = buildGenerationPreviewState(id, { ...s.generatedGroups, groups: normalizedGroups }, s.historyAnalysis || null);
     const analysisPayload = buildTrackingAnalysisMetaFromGroups(normalizedGroups, s.historyAnalysis || null);
     analysisPayload.previewSummary = previewSnapshot.summary || '';
@@ -2577,28 +2608,20 @@ function getManualFieldLimits(fieldKey){
 }
 
 function fillManualFieldsFromPlan(id, groups){
-  const names = [
-    $(`${id}_prize1Desc`).value.trim() || '第一組',
-    $(`${id}_prize2Desc`).value.trim() || '第二組',
-    $(`${id}_prize3Desc`).value.trim() || '第三組',
-    $(`${id}_prize4Desc`).value.trim() || '第四組',
-    $(`${id}_prize5Desc`).value.trim() || '全車號碼'
-  ];
+  const canonicalGroups = getCanonicalGeneratedGroups({ groups: (groups && groups.groups) ? groups.groups : groups, canonicalGroups: groups?.canonicalGroups || null }, id);
   const mapping = [
-    ['manualGroup1', names[0]],
-    ['manualGroup2', names[1]],
-    ['manualGroup3', names[2]],
-    ['manualGroup4', names[3]],
-    ['manualFull', names[4]]
+    ['manualGroup1', canonicalGroups.group1],
+    ['manualGroup2', canonicalGroups.group2],
+    ['manualGroup3', canonicalGroups.group3],
+    ['manualGroup4', canonicalGroups.group4],
+    ['manualFull', canonicalGroups.full]
   ];
-  mapping.forEach(([fieldKey, groupName]) => {
+  mapping.forEach(([fieldKey, values]) => {
     const input = $(`${id}_${fieldKey}`);
-    if(input){
-      const values = Array.isArray(groups[groupName]) ? groups[groupName] : [];
-      input.value = values.join(' ');
-    }
+    if(input) input.value = (Array.isArray(values) ? values : []).join(' ');
   });
 }
+
 
 function clearManualFields(id){
   ['manualGroup1','manualGroup2','manualGroup3','manualGroup4','manualFull'].forEach(key => {
@@ -3102,6 +3125,14 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     const metrics = buildCandidatePlanMetrics(mains, analysis);
     return {
       groups,
+      canonicalGroups: {
+        group1: (groups[groupNames[0]] || []).slice(),
+        group2: (groups[groupNames[1]] || []).slice(),
+        group3: (groups[groupNames[2]] || []).slice(),
+        group4: (groups[groupNames[3]] || []).slice(),
+        full: (groups[groupNames[4]] || []).slice()
+      },
+      groupLabels: groupNames.slice(),
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
@@ -3227,6 +3258,14 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
     groups[groupNames[3]] = finalGroups[groupNames[3]];
     const candidate = {
       groups,
+      canonicalGroups: {
+        group1: (groups[groupNames[0]] || []).slice(),
+        group2: (groups[groupNames[1]] || []).slice(),
+        group3: (groups[groupNames[2]] || []).slice(),
+        group4: (groups[groupNames[3]] || []).slice(),
+        full: (groups[groupNames[4]] || []).slice()
+      },
+      groupLabels: groupNames.slice(),
       searchedCandidates: candidateCount,
       analyzedDrawCount: analysis.evaluatedWindow || analysis.drawCount || 0,
       elapsedMs: 0,
@@ -3311,12 +3350,12 @@ $(`${id}_btnGenerateSmart`).addEventListener("click", async ()=>{
   await sleep(120);
   try {
     const bestResult = await buildSmartGroups(id, analysis);
-    state.lotteries[id].generatedGroups = bestResult;
-    const preview = buildGenerationPreviewState(id, bestResult, analysis);
+    state.lotteries[id].generatedGroups = attachCanonicalGeneratedGroups(bestResult, id);
+    const preview = buildGenerationPreviewState(id, state.lotteries[id].generatedGroups, analysis);
     state.lastGenerationPreview = { lotteryId:id, generated:bestResult, analysis, preview };
     setLockedGroupsFromPreview(id, preview);
-    renderGroupPreview(id, bestResult);
-    fillManualFieldsFromPlan(id, bestResult.groups);
+    renderGroupPreview(id, state.lotteries[id].generatedGroups);
+    fillManualFieldsFromPlan(id, state.lotteries[id].generatedGroups);
     setConfirmAvailability(id, true, bestResult.canNotify ? '已完成完整分析，可直接通報' : '已完成分析，可自行決定是否通報');
     showMiniNotice(`${state.lotteries[id].cfg.title}：已自動分組，完整分析已直接顯示在預覽區，下方可直接按通報`, bestResult.canNotify === false ? 'warn' : 'ok');
   } catch (err) {
