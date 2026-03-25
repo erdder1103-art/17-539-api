@@ -101,6 +101,13 @@ app.post('/api/auth/login', (req, res) => {
   }
 });
 
+function requireVipMember(req, res, next) {
+  if (req.authUser?.role === 'admin') return next();
+  const level = String(req.authUser?.accessLevel || '').toLowerCase();
+  if (level === 'vip') return next();
+  return res.status(403).json({ ok: false, message: '此功能僅限 VIP 會員使用' });
+}
+
 app.get('/api/auth/me', (req, res) => {
   const token = getAuthTokenFromRequest(req);
   const found = findUserByToken(token, getDeviceInfoFromRequest(req));
@@ -600,7 +607,7 @@ app.post('/api/telegram/config', (req, res) => {
   }
 });
 
-app.post('/api/telegram/broadcast', async (req, res) => {
+app.post('/api/telegram/broadcast', requireVipMember, async (req, res) => {
   try {
     const body = req.body || {};
     const text = String(body.text || '').trim();

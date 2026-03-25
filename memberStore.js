@@ -100,6 +100,7 @@ function sanitizeUser(user, store) {
     planType: user.planType || 'month',
     durationDays: Number(user.durationDays || 0),
     note: user.note || '',
+    accessLevel: user.accessLevel || (user.role === 'admin' ? 'vip' : 'normal'),
     lastLoginAt: user.lastLoginAt || '',
     isExpired: isExpired(user),
     accessKeyId: user.accessKeyId || '',
@@ -172,6 +173,7 @@ function defaultStore() {
       createdAt: nowIso(),
       updatedAt: nowIso(),
       note: '首次部署預設帳號，請登入後盡快修改。',
+      accessLevel: 'vip',
       deviceLimit: 99,
       ...adminExpiry
     }],
@@ -211,6 +213,7 @@ function ensureStoreShape(store) {
       Object.assign(next, buildExpiry(next.role === 'admin' ? 'permanent' : 'month', next.role === 'admin' ? 0 : 30));
     }
     if (!next.deviceLimit) next.deviceLimit = next.role === 'admin' ? 99 : DEFAULT_DEVICE_LIMIT;
+    if (!next.accessLevel) next.accessLevel = next.role === 'admin' ? 'vip' : 'normal';
     return next;
   });
   cleanupExpiredSessions(store);
@@ -389,6 +392,7 @@ function createMember(payload = {}, adminUser) {
     createdAt: nowIso(),
     updatedAt: nowIso(),
     note: String(payload.note || '').trim(),
+    accessLevel: payload.role === 'admin' ? 'vip' : (String(payload.accessLevel || '').toLowerCase() === 'vip' ? 'vip' : 'normal'),
     deviceLimit: payload.role === 'admin' ? 99 : DEFAULT_DEVICE_LIMIT,
     ...expiry,
     accessKeyId: String(payload.accessKeyId || '').trim()
@@ -407,6 +411,7 @@ function updateMember(memberId, payload = {}, adminUser) {
   if (payload.displayName !== undefined) member.displayName = String(payload.displayName || '').trim() || member.username;
   if (payload.note !== undefined) member.note = String(payload.note || '').trim();
   if (payload.role !== undefined && member.username !== DEFAULT_ADMIN_USERNAME) member.role = payload.role === 'admin' ? 'admin' : 'member';
+  if (payload.accessLevel !== undefined) member.accessLevel = String(payload.accessLevel || '').toLowerCase() === 'vip' ? 'vip' : 'normal';
   if (payload.status !== undefined) {
     member.status = payload.status === 'disabled' ? 'disabled' : 'active';
     if (member.status === 'disabled') {
@@ -424,7 +429,7 @@ function updateMember(memberId, payload = {}, adminUser) {
   }
   if (payload.password) member.password = makePasswordRecord(String(payload.password));
   member.updatedAt = nowIso();
-  addAdminLog(store, adminUser, '更新會員', member.username, `狀態:${member.status} 方案:${member.planType}`);
+  addAdminLog(store, adminUser, '更新會員', member.username, `狀態:${member.status} 方案:${member.planType} 等級:${member.accessLevel || 'normal'}`);
   saveStore(store);
   return sanitizeUser(member, store);
 }

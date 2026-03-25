@@ -72,6 +72,10 @@
       .moduleNav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
       .moduleBtn{min-width:0;width:100%;padding:14px 10px;font-size:15px}
       .accountGrid{grid-template-columns:1fr}
+      .desktop-only{display:none !important}
+      .mobile-only{display:block !important}
+      .analysisWrap.statsDesktop{grid-template-columns:1fr !important}
+      .analysisPanel.compactMobile .chips{max-height:172px;overflow:auto}
     }
     @media (max-width: 480px){
       .brand{align-items:flex-start;gap:10px}
@@ -96,7 +100,10 @@
       min-height:100vh;
       padding:14px;
     }
-    .wrap{max-width:1680px;margin:0 auto}
+    .wrap{width:min(100%, 1880px);max-width:none;margin:0 auto}
+    .twoCols.single-module{grid-template-columns:minmax(0,1fr)}
+    .twoCols.single-module .lotteryWrap:not(.hiddenByModule){width:100%}
+    .desktop-only{display:block}.mobile-only{display:none}
     .topbar{
       display:flex; align-items:center; justify-content:space-between;
       padding:10px 14px;
@@ -140,7 +147,7 @@
       align-items:start;
     }
     @media (max-width:1200px){
-      .twoCols{grid-template-columns:1fr}
+      .twoCols,.twoCols.single-module{grid-template-columns:1fr}
     }
 
     .lotteryWrap{
@@ -576,6 +583,7 @@
     #taskCenterFab.fabCompact{padding:12px 13px !important;transform:translateY(-72px) scale(.9);opacity:.94}
     #taskCenterFab,#broadcastFab{display:flex;align-items:center;gap:8px;max-width:min(42vw,220px)}#taskCenterFab.fabCompact span:last-child,#broadcastFab.fabCompact span:last-child{display:none}@media (max-width:900px){#taskCenterFab,#broadcastFab{right:12px !important;max-width:44vw}}
     #broadcastFab{background:linear-gradient(135deg,#7a3b0f,#b96a1e);border:1px solid rgba(255,231,168,.28)}
+    .vipLocked{opacity:.45 !important;pointer-events:none !important;filter:grayscale(.15)}
     #broadcastTargetModeRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
     .broadcast-pill{padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.16);cursor:pointer;background:rgba(255,255,255,.06);color:#f7f7f7;font-size:13px}
     .broadcast-pill.active{background:rgba(255,231,168,.16);border-color:rgba(247,215,123,.4);color:#ffe7a8}
@@ -873,6 +881,12 @@
     document.querySelectorAll('.lotteryWrap').forEach(el=>el.classList.toggle('hiddenByModule', el.dataset.lottery !== module));
     const panel = $('accountPanel');
     if(panel) panel.classList.toggle('show', module === 'account');
+    const cols = document.querySelector('.twoCols');
+    if(cols){
+      cols.classList.toggle('single-module', module === 'l539' || module === 'ttl' || module === 'account');
+    }
+    document.body.dataset.activeModule = module;
+    syncVipFeatureAccess();
   }
 
   function switchModule(module){
@@ -884,8 +898,9 @@
   function updateAccountPanel(){
     const user = state.auth.user || {};
     const roleText = user.role === 'admin' ? '管理員' : '會員';
+    const accessText = user.accessLevel === 'vip' ? 'VIP' : '一般';
     if ($('accountNameText')) $('accountNameText').textContent = user.displayName || user.username || '—';
-    if ($('accountRoleText')) $('accountRoleText').textContent = `${user.username || '—'} / ${roleText}`;
+    if ($('accountRoleText')) $('accountRoleText').textContent = `${user.username || '—'} / ${roleText} / ${accessText}`;
     if ($('accountExpireText')) $('accountExpireText').textContent = user.expiresAt ? String(user.expiresAt).replace('T',' ').slice(0,16) : '—';
   }
 
@@ -1536,7 +1551,7 @@ function cleanupNumbers(arr, maxNum){
               資料來源：${escapeHtml(cfg.syncUrl)}
             </div>
 
-            <div class="analysisWrap" style="margin-top:12px;">
+            <div class="analysisWrap statsDesktop desktop-only" style="margin-top:12px;grid-template-columns:1fr 1fr 1.35fr;align-items:stretch;">
               <div class="analysisPanel">
                 <div class="analysisTitle">熱號（單號次數高）</div>
                 <div id="${id}_hotNumbers" class="chips"></div>
@@ -1545,12 +1560,24 @@ function cleanupNumbers(arr, maxNum){
                 <div class="analysisTitle">冷號（單號次數低）</div>
                 <div id="${id}_coldNumbers" class="chips"></div>
               </div>
+              <div class="analysisPanel">
+                <div class="analysisTitle">高風險雙號 / 三號</div>
+                <div class="chips" id="${id}_riskPairs"></div>
+                <div class="chips" id="${id}_riskTriples" style="margin-top:8px;"></div>
+              </div>
             </div>
 
-            <div class="analysisPanel" style="margin-top:12px;">
-              <div class="analysisTitle">高風險雙號 / 三號</div>
-              <div class="chips" id="${id}_riskPairs"></div>
-              <div class="chips" id="${id}_riskTriples" style="margin-top:8px;"></div>
+            <div class="analysisWrap mobile-only" style="margin-top:12px;grid-template-columns:1fr;">
+              <div class="analysisPanel compactMobile">
+                <div class="analysisTitle">熱號 / 冷號</div>
+                <div class="chips" id="${id}_hotNumbers_mobile"></div>
+                <div class="chips" id="${id}_coldNumbers_mobile" style="margin-top:8px;"></div>
+              </div>
+              <div class="analysisPanel compactMobile">
+                <div class="analysisTitle">高風險雙號 / 三號</div>
+                <div class="chips" id="${id}_riskPairs_mobile"></div>
+                <div class="chips" id="${id}_riskTriples_mobile" style="margin-top:8px;"></div>
+              </div>
             </div>
 
             <div class="analysisPanel" style="margin-top:12px;">
@@ -1715,9 +1742,13 @@ function cleanupNumbers(arr, maxNum){
       autoState: $(`${id}_autoState`),
       syncNote: $(`${id}_syncNote`),
       hotNumbers: $(`${id}_hotNumbers`),
+      hotNumbersMobile: $(`${id}_hotNumbers_mobile`),
       coldNumbers: $(`${id}_coldNumbers`),
+      coldNumbersMobile: $(`${id}_coldNumbers_mobile`),
       riskPairs: $(`${id}_riskPairs`),
+      riskPairsMobile: $(`${id}_riskPairs_mobile`),
       riskTriples: $(`${id}_riskTriples`),
+      riskTriplesMobile: $(`${id}_riskTriples_mobile`),
       groupPreview: $(`${id}_groupPreview`),
       resultBox: $(`${id}_resultBox`),
       currentWinner: $(`${id}_currentWinner`),
@@ -1837,8 +1868,10 @@ function cleanupNumbers(arr, maxNum){
     const nameText = $('memberNameText');
     if(nameText && user){
       const expiredText = user?.expiresAt ? `｜到期 ${String(user.expiresAt).slice(0,10)}` : '';
-      nameText.textContent = `${user.displayName || user.username}｜${user.role === 'admin' ? '管理員' : '會員'}${expiredText}`;
+      const accessText = user?.accessLevel === 'vip' ? 'VIP' : '一般';
+      nameText.textContent = `${user.displayName || user.username}｜${user.role === 'admin' ? '管理員' : '會員'} / ${accessText}${expiredText}`;
     }
+    syncVipFeatureAccess();
     const adminPanel = $('adminPanel');
     if(adminPanel) adminPanel.classList.remove('show');
   }
@@ -1854,6 +1887,27 @@ function cleanupNumbers(arr, maxNum){
     if(overlay) overlay.style.display = 'flex';
     const adminPanel = $('adminPanel');
     if(adminPanel) adminPanel.classList.remove('show');
+  }
+
+  function hasVipAccess(){
+    return String(state.auth?.user?.accessLevel || '').toLowerCase() === 'vip';
+  }
+
+  function ensureVipAccess(featureName='此功能'){
+    if(hasVipAccess()) return true;
+    showMiniNotice(`${featureName} 僅限 VIP 會員使用`, 'warn');
+    return false;
+  }
+
+  function syncVipFeatureAccess(){
+    const vip = hasVipAccess();
+    const taskFab = $('taskCenterFab');
+    const broadcastFab = $('broadcastFab');
+    [taskFab, broadcastFab].forEach(el=>{
+      if(!el) return;
+      el.classList.toggle('vipLocked', !vip);
+      el.title = vip ? '' : '僅限 VIP 會員使用';
+    });
   }
 
 
@@ -2433,50 +2487,54 @@ function cleanupNumbers(arr, maxNum){
 
   function renderHistoryAnalysis(id, analysis){
     const el = getEls(id);
-    el.hotNumbers.innerHTML = "";
-    el.coldNumbers.innerHTML = "";
-    el.riskPairs.innerHTML = "";
-    el.riskTriples.innerHTML = "";
+    const mobile = window.innerWidth <= 768;
+    const hotLimit = mobile ? 6 : 14;
+    const coldLimit = mobile ? 6 : 14;
+    const pairLimit = mobile ? 8 : 14;
+    const tripleLimit = mobile ? 6 : 10;
+    [el.hotNumbers, el.hotNumbersMobile, el.coldNumbers, el.coldNumbersMobile, el.riskPairs, el.riskPairsMobile, el.riskTriples, el.riskTriplesMobile].forEach(node=>{ if(node) node.innerHTML = ''; });
 
-    analysis.hot.forEach(num=>{
-      const chip = document.createElement("div");
-      chip.className = "chip hot";
-      chip.textContent = `${num}（${analysis.counts[num]}次）`;
-      el.hotNumbers.appendChild(chip);
+    const pushChip = (target, className, text) => {
+      if(!target) return;
+      const chip = document.createElement('div');
+      chip.className = className;
+      chip.textContent = text;
+      target.appendChild(chip);
+    };
+
+    (analysis.hot || []).slice(0, hotLimit).forEach(num=>{
+      const label = `${num}（${analysis.counts[num]}次）`;
+      pushChip(el.hotNumbers, 'chip hot', label);
+      pushChip(el.hotNumbersMobile, 'chip hot', label);
     });
 
-    analysis.cold.forEach(num=>{
-      const chip = document.createElement("div");
-      chip.className = "chip cold";
-      chip.textContent = `${num}（${analysis.counts[num]}次）`;
-      el.coldNumbers.appendChild(chip);
+    (analysis.cold || []).slice(0, coldLimit).forEach(num=>{
+      const label = `${num}（${analysis.counts[num]}次）`;
+      pushChip(el.coldNumbers, 'chip cold', label);
+      pushChip(el.coldNumbersMobile, 'chip cold', label);
     });
 
-    if(analysis.topPairs.length === 0){
-      const chip = document.createElement("div");
-      chip.className = "chip warn";
-      chip.textContent = "尚無高風險雙號";
-      el.riskPairs.appendChild(chip);
+    const topPairs = Array.isArray(analysis.topPairs) ? analysis.topPairs.slice(0, pairLimit) : [];
+    if(topPairs.length === 0){
+      pushChip(el.riskPairs, 'chip warn', '尚無高風險雙號');
+      pushChip(el.riskPairsMobile, 'chip warn', '尚無高風險雙號');
     }else{
-      analysis.topPairs.forEach(([key,count])=>{
-        const chip = document.createElement("div");
-        chip.className = "chip warn";
-        chip.textContent = `${key.replaceAll("-", "・")}（${count}次）`;
-        el.riskPairs.appendChild(chip);
+      topPairs.forEach(([key,count])=>{
+        const label = `${key.replaceAll('-', '・')}（${count}次）`;
+        pushChip(el.riskPairs, 'chip warn', label);
+        pushChip(el.riskPairsMobile, 'chip warn', label);
       });
     }
 
-    if(analysis.topTriples.length === 0){
-      const chip = document.createElement("div");
-      chip.className = "chip warn";
-      chip.textContent = "尚無高風險三號";
-      el.riskTriples.appendChild(chip);
+    const topTriples = Array.isArray(analysis.topTriples) ? analysis.topTriples.slice(0, tripleLimit) : [];
+    if(topTriples.length === 0){
+      pushChip(el.riskTriples, 'chip warn', '尚無高風險三號');
+      pushChip(el.riskTriplesMobile, 'chip warn', '尚無高風險三號');
     }else{
-      analysis.topTriples.forEach(([key,count])=>{
-        const chip = document.createElement("div");
-        chip.className = "chip warn";
-        chip.textContent = `${key.replaceAll("-", "・")}（${count}次）`;
-        el.riskTriples.appendChild(chip);
+      topTriples.forEach(([key,count])=>{
+        const label = `${key.replaceAll('-', '・')}（${count}次）`;
+        pushChip(el.riskTriples, 'chip warn', label);
+        pushChip(el.riskTriplesMobile, 'chip warn', label);
       });
     }
   }
@@ -4646,6 +4704,7 @@ function ensureTaskCenterUI(){
   broadcastFab.style.cssText = 'position:fixed;right:18px;bottom:max(108px, calc(env(safe-area-inset-bottom, 0px) + 108px));z-index:10019;border-radius:999px;padding:14px 18px;box-shadow:0 16px 35px rgba(0,0,0,.38);transition:transform .18s ease, opacity .18s ease, padding .18s ease, bottom .18s ease';
   broadcastFab.addEventListener('click', openBroadcastCenter);
   document.body.appendChild(broadcastFab);
+  syncVipFeatureAccess();
 
   const modal = document.createElement('div');
   modal.id = 'taskCenterModal';
@@ -4769,6 +4828,7 @@ function renderTaskQuickStatus(){
 
 function openTaskCenter(){
   ensureTaskCenterUI();
+  if(!ensureVipAccess('任務模式')) return;
   $('taskCenterModal').style.display = 'flex';
   renderTaskQuickStatus();
   renderTaskQueueBoard();
@@ -4799,6 +4859,7 @@ function buildTaskPayloadFromCenter(){
 }
 
 function createTaskFromCenter(runNow){
+  if(!ensureVipAccess('任務模式')) return;
   const task = buildTaskPayloadFromCenter();
   state.taskCenter.queue.unshift(task);
   saveTaskQueue();
@@ -4843,6 +4904,7 @@ async function executeTask(task){
 }
 
 async function executeTaskById(taskId){
+  if(!ensureVipAccess('任務模式')) return;
   const task = (state.taskCenter.queue || []).find(x=>x.id === taskId);
   if(!task) return;
   task.status = 'running';
@@ -5050,6 +5112,7 @@ async function confirmLatestGenerationPreview(){ return; }
 
 function openBroadcastCenter(){
   ensureTaskCenterUI();
+  if(!ensureVipAccess('群組通報')) return;
   if($('broadcastModal')) $('broadcastModal').style.display = 'flex';
   setBroadcastMode(getBroadcastState().mode || 'all');
   renderBroadcastPreview();
@@ -5102,6 +5165,7 @@ async function onBroadcastFileChange(ev){
 }
 
 async function sendManualBroadcast(){
+  if(!ensureVipAccess('群組通報')) return;
   try{
     const text = ($('broadcastText')?.value || '').trim();
     const s = getBroadcastState();
