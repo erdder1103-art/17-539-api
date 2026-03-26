@@ -97,9 +97,18 @@ app.post('/api/auth/login', (req, res) => {
     const result = loginMember(username, password, getDeviceInfoFromRequest(req));
     return res.json({ ok: true, token: result.token, user: result.user, expiresAt: result.expiresAt, isDefaultAdmin: result.isDefaultAdmin });
   } catch (err) {
-    return res.status(401).json({ ok: false, message: err.message || '登入失敗' });
+    const msg = err.message || '登入失敗';
+    const code = msg.includes('帳號不存在') ? 'ACCOUNT_NOT_FOUND'
+      : msg.includes('密碼錯誤') ? 'PASSWORD_INCORRECT'
+      : msg.includes('使用期限已到') ? 'ACCOUNT_EXPIRED'
+      : msg.includes('通知管理員') ? 'CONTACT_ADMIN'
+      : msg.includes('綁定') ? 'DEVICE_LIMIT_REACHED'
+      : 'LOGIN_FAILED';
+    return res.status(401).json({ ok: false, code, message: msg });
   }
 });
+
+app.get('/api/health', (req, res) => res.json(getHealthSnapshot()));
 
 function requireVipMember(req, res, next) {
   if (req.authUser?.role === 'admin') return next();
@@ -123,6 +132,7 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/')) return next();
+  if (req.path === '/health' || req.originalUrl === '/api/health' || req.originalUrl.startsWith('/api/health?')) return next();
   const token = getAuthTokenFromRequest(req);
   const found = findUserByToken(token, getDeviceInfoFromRequest(req));
   if (!found) {
@@ -544,7 +554,6 @@ function getHealthSnapshot() {
   };
 }
 
-app.get('/api/health', (req, res) => res.json(getHealthSnapshot()));
 app.get('/api/bot/runtime', (req, res) => res.json({ ok: true, ...getBotInteractionState() }));
 app.get('/api/debug/storage', (req, res) => res.json({ ok: true, storage: getStorageDebug() }));
 app.get('/api/weekly/539', (req, res) => res.json(getRangeSummary({ preset: 'this_week' })));

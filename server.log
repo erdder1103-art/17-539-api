@@ -1,0 +1,8 @@
+API Server running http://localhost:4010
+Storage data dir: /data
+Storage volume dir: /data
+Storage init: {"initialized":true,"created":[],"target":"/data","usedVolume":true}
+Sync interval ms: 30000
+539 第 1 次更新失敗： request to https://sc888.net/index.php?s=/LotteryFtn/index failed, reason: getaddrinfo EAI_AGAIN sc888.net
+TTL 第 1 次更新失敗： request to https://sc888.net/index.php?s=/LotteryFan/index failed, reason: getaddrinfo EAI_AGAIN sc888.net
+539 第 2 次更新失敗： request to https://sc888.net/index.php?s=/LotteryFtn/index failed, reason: getaddrinfo EAI_AGAIN sc888.net

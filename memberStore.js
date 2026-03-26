@@ -294,9 +294,10 @@ function ensureMemberDevice(store, user, deviceInfo = {}) {
 function loginMember(username, password, deviceInfo = {}) {
   const store = loadStore();
   const user = getUserByUsername(store, username);
-  if (!user || user.status === 'disabled') throw new Error('帳號或密碼錯誤');
-  if (isExpired(user)) throw new Error('會員使用期限已到，請聯絡管理員續期');
-  if (!verifyPassword(password, user.password)) throw new Error('帳號或密碼錯誤');
+  if (!user) throw new Error('帳號不存在');
+  if (user.status === 'disabled') throw new Error('帳號已停用，請通知管理員處理');
+  if (isExpired(user)) throw new Error('會員使用期限已到，請通知管理員處理');
+  if (!verifyPassword(password, user.password)) throw new Error('密碼錯誤');
   const normalizedDevice = normalizeDeviceInfo(deviceInfo);
   const boundDevice = ensureMemberDevice(store, user, normalizedDevice);
   const token = crypto.randomBytes(32).toString('hex');
@@ -374,6 +375,14 @@ function listMembers() {
   return store.users.map(user => sanitizeUser(user, store)).sort((a, b) => String(a.username).localeCompare(String(b.username), 'zh-Hant'));
 }
 
+
+function normalizeDeviceLimit(value, fallback = DEFAULT_DEVICE_LIMIT, role = 'member') {
+  if (role === 'admin') return 99;
+  const n = Number(value);
+  if (ALLOWED_DEVICE_LIMITS.includes(n)) return n;
+  return fallback;
+}
+
 function createMember(payload = {}, adminUser) {
   requireAdmin(adminUser);
   const store = loadStore();
@@ -393,7 +402,7 @@ function createMember(payload = {}, adminUser) {
     updatedAt: nowIso(),
     note: String(payload.note || '').trim(),
     accessLevel: payload.role === 'admin' ? 'vip' : (String(payload.accessLevel || '').toLowerCase() === 'vip' ? 'vip' : 'normal'),
-    deviceLimit: payload.role === 'admin' ? 99 : DEFAULT_DEVICE_LIMIT,
+    deviceLimit: normalizeDeviceLimit(payload.deviceLimit, DEFAULT_DEVICE_LIMIT, payload.role === 'admin' ? 'admin' : 'member'),
     ...expiry,
     accessKeyId: String(payload.accessKeyId || '').trim()
   };
@@ -412,6 +421,7 @@ function updateMember(memberId, payload = {}, adminUser) {
   if (payload.note !== undefined) member.note = String(payload.note || '').trim();
   if (payload.role !== undefined && member.username !== DEFAULT_ADMIN_USERNAME) member.role = payload.role === 'admin' ? 'admin' : 'member';
   if (payload.accessLevel !== undefined) member.accessLevel = String(payload.accessLevel || '').toLowerCase() === 'vip' ? 'vip' : 'normal';
+  if (payload.deviceLimit !== undefined) member.deviceLimit = normalizeDeviceLimit(payload.deviceLimit, Number(member.deviceLimit || DEFAULT_DEVICE_LIMIT), member.role);
   if (payload.status !== undefined) {
     member.status = payload.status === 'disabled' ? 'disabled' : 'active';
     if (member.status === 'disabled') {
@@ -429,7 +439,7 @@ function updateMember(memberId, payload = {}, adminUser) {
   }
   if (payload.password) member.password = makePasswordRecord(String(payload.password));
   member.updatedAt = nowIso();
-  addAdminLog(store, adminUser, '更新會員', member.username, `狀態:${member.status} 方案:${member.planType} 等級:${member.accessLevel || 'normal'}`);
+  addAdminLog(store, adminUser, '更新會員', member.username, `狀態:${member.status} 方案:${member.planType} 等級:${member.accessLevel || 'normal'} 設備上限:${member.deviceLimit || DEFAULT_DEVICE_LIMIT}`);
   saveStore(store);
   return sanitizeUser(member, store);
 }
