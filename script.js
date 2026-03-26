@@ -1448,7 +1448,7 @@ function cleanupNumbers(arr, maxNum){
     const best = await buildSimpleGeneratedPlan(id, analysis, onProgress);
     const elapsedMs = Date.now() - startedAt;
     if (typeof onProgress === 'function') onProgress({ searched: 1, target, elapsedMs, lowRiskFound: 1, stageLabel: '完成生成', statusText: '生成完成', footerText: best.whyQualified || '已完成可用方案生成。' });
-    return Object.assign({}, best, { searchedCandidates: 1, generatedTryCount: 1, elapsedMs, noQualifiedResult: false });
+    return Object.assign({}, best, { searchedCandidates: 1, generatedTryCount: 1, elapsedMs, noQualifiedResult: !!best?.noQualifiedResult });
   }
 
 function formatEta(ms){
@@ -3226,6 +3226,7 @@ async function buildSimpleGeneratedPlan(id, analysis, onProgress){
   const cold = (analysis.cold || []).slice(0, 8);
   const mid = (analysis.mid || []).filter(n => !hot.includes(n) && !cold.includes(n));
   const trendUp = (analysis.trendUp || []).slice(0, 8);
+  const trendDown = (analysis.trendDown || []).slice(0, 8);
   const highRiskPairs = new Set(analysis.highRiskPairs || []);
   const highRiskTriples = new Set(analysis.highRiskTriples || []);
   const riskyNumbers = new Set(analysis.riskyNumberSet ? Array.from(analysis.riskyNumberSet) : []);

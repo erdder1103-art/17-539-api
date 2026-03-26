@@ -6,6 +6,7 @@ const DEFAULT_ADMIN_USERNAME = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
 const DEFAULT_ADMIN_PASSWORD = process.env.DEFAULT_ADMIN_PASSWORD || 'admin12345';
 const SESSION_TTL_MS = Number(process.env.AUTH_SESSION_TTL_MS || 1000 * 60 * 60 * 24 * 7);
 const DEFAULT_DEVICE_LIMIT = Number(process.env.MEMBER_DEVICE_LIMIT || 3);
+const ALLOWED_DEVICE_LIMITS = [3, 5, 8, 10];
 
 const PLAN_DAYS = {
   key: 30,
